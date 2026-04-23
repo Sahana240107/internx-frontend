@@ -28,7 +28,59 @@ const ROLE_SKILLS = {
 }
 const SKILL_ICONS = { 'QA / Tester':'🧪','Intern':'🎓','Team Player':'🤝','Detail Oriented':'✅','Fast Learner':'🚀','Frontend Dev':'⚡','UI Builder':'🎨','CSS Wizard':'✨','React':'⚛','Backend Dev':'⚙️','API Builder':'🔌','DB Expert':'🗄','Python':'🐍','Full Stack':'🔥','Problem Solver':'🧩','Versatile':'🔄','DevOps':'🛠','CI/CD':'🔁','Cloud':'☁️','Automation':'🤖','Designer':'🖌','Figma':'🎭','UX Focus':'👁','Creative':'💡','Curious':'🔍','Driven':'🏁' }
 
-// ─── Certificate SVG ──────────────────────────────────────────────────────────
+// ─── Streak calculation (FIXED) ───────────────────────────────────────────────
+/**
+ * Calculates a true consecutive-day streak from today backwards.
+ *
+ * Rules:
+ *  - Collects all unique YYYY-MM-DD dates from task `updated_at` fields.
+ *  - Starts from today (or yesterday if today has no activity yet — grace period).
+ *  - Walks backwards day-by-day; stops as soon as a day is missing.
+ *
+ * Bug that was here before:
+ *   const activeDays = new Set(...).size          // just a count of unique days
+ *   const streak     = Math.min(activeDays, 14)   // capped at 14 — NOT consecutive
+ *
+ * This meant working Mon + Wed + Fri showed streak=3 even though there were gaps,
+ * and someone who hadn't touched the app in a week still showed a "streak".
+ */
+function calcStreak(tasks) {
+  // Collect all unique calendar dates that have task activity
+  const activeDates = new Set(
+    tasks
+      .filter(t => t.updated_at)
+      .map(t => t.updated_at.slice(0, 10))   // "YYYY-MM-DD"
+  )
+
+  if (activeDates.size === 0) return 0
+
+  // Helper: get "YYYY-MM-DD" string for a Date offset by `offsetDays` from today
+  const toDateStr = (offsetDays = 0) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offsetDays)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const today     = toDateStr(0)
+  const yesterday = toDateStr(-1)
+
+  // Grace period: if today has no activity yet, start counting from yesterday.
+  // This prevents the streak from resetting every morning before the user works.
+  let cursor = activeDates.has(today) ? 0 : activeDates.has(yesterday) ? -1 : null
+
+  // If neither today nor yesterday has activity → streak is broken
+  if (cursor === null) return 0
+
+  let streak = 0
+  while (activeDates.has(toDateStr(cursor))) {
+    streak++
+    cursor--
+  }
+
+  return streak
+}
+
+// ─── Certificate SVG (signatures removed) ─────────────────────────────────────
 function buildCertSVG({ name, role, project, date, certId }) {
   const enc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 636" width="900" height="636">
@@ -66,18 +118,12 @@ function buildCertSVG({ name, role, project, date, certId }) {
   <text x="450" y="385" font-family="Arial,sans-serif" font-size="13" fill="#3d3d4e" text-anchor="middle">for the project</text>
   <text x="450" y="415" font-family="Georgia,serif" font-size="19" font-weight="600" fill="#0a0a0f" text-anchor="middle">&quot;${enc(project)}&quot;</text>
   <line x1="110" y1="448" x2="790" y2="448" stroke="#e2e2ee" stroke-width="1"/>
-  <line x1="138" y1="502" x2="305" y2="502" stroke="#c8c8de" stroke-width="1"/>
-  <text x="221" y="518" font-family="Arial,sans-serif" font-size="11" fill="#3d3d4e" text-anchor="middle" font-weight="600">Dr. Aryan Mehta</text>
-  <text x="221" y="533" font-family="Arial,sans-serif" font-size="10.5" fill="#8888a0" text-anchor="middle">Program Director, InternX</text>
-  <circle cx="450" cy="492" r="38" fill="none" stroke="url(#gacc)" stroke-width="1.5"/>
-  <circle cx="450" cy="492" r="29" fill="url(#gacc)" opacity="0.09"/>
-  <text x="450" y="487" font-family="Arial,sans-serif" font-size="11" text-anchor="middle" fill="#7c6fff" font-weight="700" letter-spacing="1">INTERN</text>
-  <text x="450" y="502" font-family="Arial,sans-serif" font-size="11" text-anchor="middle" fill="#7c6fff" font-weight="700" letter-spacing="1">X</text>
-  <text x="450" y="515" font-family="Arial,sans-serif" font-size="8" text-anchor="middle" fill="#8888a0" letter-spacing="1.5">ACADEMY</text>
-  <line x1="595" y1="502" x2="762" y2="502" stroke="#c8c8de" stroke-width="1"/>
-  <text x="678" y="518" font-family="Arial,sans-serif" font-size="11" fill="#3d3d4e" text-anchor="middle" font-weight="600">Priya Nair</text>
-  <text x="678" y="533" font-family="Arial,sans-serif" font-size="10.5" fill="#8888a0" text-anchor="middle">Chief Learning Officer</text>
-  <text x="450" y="580" font-family="Arial,sans-serif" font-size="10" fill="#8888a0" text-anchor="middle">Issued: ${enc(date)} &#xB7; Certificate ID: ${enc(certId)} &#xB7; internxacademy.dev</text>
+  <circle cx="450" cy="510" r="45" fill="none" stroke="url(#gacc)" stroke-width="1.5"/>
+  <circle cx="450" cy="510" r="35" fill="url(#gacc)" opacity="0.09"/>
+  <text x="450" y="505" font-family="Arial,sans-serif" font-size="11" text-anchor="middle" fill="#7c6fff" font-weight="700" letter-spacing="1">INTERN</text>
+  <text x="450" y="520" font-family="Arial,sans-serif" font-size="11" text-anchor="middle" fill="#7c6fff" font-weight="700" letter-spacing="1">X</text>
+  <text x="450" y="535" font-family="Arial,sans-serif" font-size="8" text-anchor="middle" fill="#8888a0" letter-spacing="1.5">ACADEMY</text>
+  <text x="450" y="596" font-family="Arial,sans-serif" font-size="10" fill="#8888a0" text-anchor="middle">Issued: ${enc(date)} &#xB7; Certificate ID: ${enc(certId)} &#xB7; internxacademy.dev</text>
 </svg>`
 }
 
@@ -138,18 +184,14 @@ function StatCard({ icon, iconBg, iconColor, label, value, sub, trend, trendColo
       onMouseEnter={e => { e.currentTarget.style.boxShadow='0 8px 24px rgba(0,0,0,.08)'; e.currentTarget.style.transform='translateY(-2px)' }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow='0 2px 8px rgba(0,0,0,.04)'; e.currentTarget.style.transform='none' }}
     >
-      {/* Subtle top accent bar */}
       <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:accentBar || iconBg, borderRadius:'22px 22px 0 0' }} />
-      {/* Background glow */}
       <div style={{ position:'absolute', top:-20, right:-20, width:80, height:80, borderRadius:'50%', background:iconBg, opacity:.12, pointerEvents:'none' }} />
-
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
         <div style={{ width:44, height:44, borderRadius:14, background:iconBg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>{icon}</div>
         {trend && !loading && (
           <span style={{ fontSize:11, fontWeight:700, color: trendColor || '#20d4a0', background: trendColor ? trendColor+'15' : 'rgba(32,212,160,.12)', padding:'4px 9px', borderRadius:8 }}>{trend}</span>
         )}
       </div>
-
       <p style={{ fontSize:10, color:'var(--ink-muted)', fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase', margin:'0 0 4px' }}>{label}</p>
       {loading
         ? <Sk h={32} w={70} r={7}/>
@@ -253,8 +295,18 @@ export default function ProfilePage() {
   const scored      = tasks.filter(t => typeof t.score === 'number')
   const avgScore    = scored.length ? (scored.reduce((s,t) => s+t.score,0)/scored.length).toFixed(0) : null
   const hoursLogged = done*2 + inProgress*0.5 + review*1
+
+  // ── FIXED: Real consecutive-day streak ──────────────────────────────────────
+  // Old (broken): const activeDays = new Set(...).size; const streak = Math.min(activeDays, 14)
+  // - This just counted total unique days worked (not consecutive) and capped at 14.
+  // - e.g. working Mon + Wed + Fri gave streak=3 despite gaps.
+  // - Someone inactive for a week still showed their old "streak" number.
+  //
+  // New (fixed): calcStreak() walks backwards from today/yesterday, stops at first gap.
+  // - Grace period: if today has no activity yet, starts from yesterday (avoids streak
+  //   resetting every morning before the user does any work).
+  const streak      = calcStreak(tasks)
   const activeDays  = new Set(tasks.filter(t => t.updated_at).map(t => t.updated_at.slice(0,10))).size
-  const streak      = Math.min(activeDays, 14)
 
   const rc        = ROLE_CONFIG[profile?.intern_role] || ROLE_CONFIG.intern
   const initials  = profile ? profile.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() : '?'
@@ -278,27 +330,19 @@ export default function ProfilePage() {
           HERO BANNER
          ══════════════════════════════════════════════════ */}
       <div style={{ borderRadius:24, overflow:'hidden', boxShadow:'0 8px 40px rgba(124,111,255,.15)', position:'relative' }}>
-
-        {/* Lighter purple gradient */}
         <div style={{ position:'absolute', inset:0, background:'linear-gradient(135deg, #8b7fff 0%, #a99fff 40%, #c4b8ff 100%)', opacity:1 }} />
-        {/* Subtle texture overlay */}
         <div style={{ position:'absolute', inset:0, backgroundImage:"url(\"data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")", opacity:.5 }} />
-        {/* Decorative orbs */}
         <div style={{ position:'absolute', right:-80, top:-80, width:360, height:360, borderRadius:'50%', background:'rgba(255,255,255,0.1)', pointerEvents:'none' }} />
         <div style={{ position:'absolute', right:60, bottom:-60, width:220, height:220, borderRadius:'50%', background:'rgba(255,255,255,0.06)', pointerEvents:'none' }} />
         <div style={{ position:'absolute', left:-40, top:60, width:180, height:180, borderRadius:'50%', background:'rgba(255,255,255,0.05)', pointerEvents:'none' }} />
 
-        {/* Content */}
         <div style={{ position:'relative', padding:'28px 32px 26px' }}>
-
-          {/* Top row: badges + buttons */}
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20, flexWrap:'wrap', gap:10 }}>
             <span style={{ display:'flex', alignItems:'center', gap:7, background:'rgba(0,200,150,0.2)', color:'#b8fff0', border:'1.5px solid rgba(0,200,150,0.3)', borderRadius:12, fontSize:12, fontWeight:700, padding:'6px 14px', backdropFilter:'blur(8px)' }}>
               <span style={{ width:7, height:7, borderRadius:'50%', background:'#4dffd4', display:'inline-block', animation:'pulse 2s ease-in-out infinite' }} />
               Active intern
             </span>
             <div style={{ display:'flex', gap:8 }}>
-              {/* View Profile GitHub button */}
               {profile?.github_username && (
                 <a
                   href={`https://github.com/${profile.github_username}`}
@@ -323,7 +367,6 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {/* Avatar row */}
           <div style={{ display:'flex', alignItems:'flex-start', gap:22 }}>
             <div style={{ position:'relative', flexShrink:0 }}>
               {loading ? (
@@ -368,7 +411,6 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {/* Skill badges */}
           {!loading && (
             <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:18 }}>
               {skills.map(s => (
@@ -435,7 +477,7 @@ export default function ProfilePage() {
       </div>
 
       {/* ══════════════════════════════════════════════════
-          ENHANCED STATS GRID
+          STATS GRID
          ══════════════════════════════════════════════════ */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(165px, 1fr))', gap:12 }}>
         <StatCard
@@ -462,11 +504,13 @@ export default function ProfilePage() {
           label="Avg Score" value={avgScore ? `${avgScore}%` : '—'} sub="across all tasks"
           trend={avgScore && avgScore >= 70 ? 'Great!' : undefined} trendColor="#f59e0b" loading={loading}
         />
+        {/* 🔥 Streak card — now shows real consecutive-day streak */}
         <StatCard
           icon="🔥" iconBg="linear-gradient(135deg,#fee2e2,#fecaca)" iconColor="#991b1b"
           accentBar="linear-gradient(90deg,#ef4444,#f87171)"
-          label="Streak" value={streak} sub="days in a row"
-          trend={streak > 0 ? 'Keep it up!' : undefined} trendColor="#ef4444" loading={loading}
+          label="Streak" value={streak} sub={streak === 1 ? 'day in a row' : 'days in a row'}
+          trend={streak >= 3 ? 'On fire! 🔥' : streak > 0 ? 'Keep it up!' : undefined}
+          trendColor="#ef4444" loading={loading}
         />
       </div>
 
@@ -481,11 +525,10 @@ export default function ProfilePage() {
           <div style={{ width:46, height:46, borderRadius:14, background:'linear-gradient(135deg,#8b7fff,#b3aaff)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, flexShrink:0, boxShadow:'0 6px 16px rgba(124,111,255,.3)' }}>🏆</div>
           <div>
             <h2 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:17, color:'var(--ink)', margin:0 }}>Certificate of Completion</h2>
-            <p style={{ fontSize:11, color:'var(--ink-muted)', margin:'2px 0 0' }}>InternX Academy — Official Document · Signed by Dr. Aryan Mehta & Priya Nair</p>
+            <p style={{ fontSize:11, color:'var(--ink-muted)', margin:'2px 0 0' }}>InternX Academy — Official Document</p>
           </div>
         </div>
 
-        {/* Softer lock / progress banner */}
         <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', borderRadius:14, background: allDone ? '#f0fdf9' : '#fdfaf4', border:`1.5px solid ${allDone ? 'rgba(20,184,130,.2)' : 'rgba(245,158,11,.2)'}`, marginBottom:16 }}>
           <span style={{ fontSize:20, flexShrink:0 }}>{allDone ? '🎉' : '📝'}</span>
           <div style={{ flex:1 }}>
@@ -504,7 +547,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Export buttons */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(135px, 1fr))', gap:8 }}>
           {[
             { fmt:'svg',   icon:'📄', label:'SVG',   sub:'Vector · scalable',   color:'#7c6fff', bg:'#f0edff' },
