@@ -20,6 +20,232 @@ const PRIORITY_CONFIG = {
   urgent: { label: 'Urgent', color: '#dc2626', bg: '#fff1f1' },
 }
 
+const BREAKDOWN_MAX = {
+  task_completion:          40,
+  correctness_reliability:  25,
+  code_quality:             20,
+  security_best_practices:  10,
+  testing_signals:           5,
+}
+
+const BREAKDOWN_LABELS = {
+  task_completion:          'Task Completion',
+  correctness_reliability:  'Correctness & Reliability',
+  code_quality:             'Code Quality',
+  security_best_practices:  'Security & Best Practices',
+  testing_signals:          'Testing Signals',
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ScoreRing({ score }) {
+  const radius = 36
+  const circ   = 2 * Math.PI * radius
+  const offset = circ - (score / 100) * circ
+  const color  = score >= 70 ? '#00c896' : score >= 50 ? '#f59e0b' : '#ef4444'
+  return (
+    <div className="relative w-24 h-24 flex items-center justify-center flex-shrink-0">
+      <svg width="96" height="96" viewBox="0 0 96 96" className="-rotate-90">
+        <circle cx="48" cy="48" r={radius} fill="none" stroke="var(--border)" strokeWidth="8" />
+        <circle cx="48" cy="48" r={radius} fill="none" stroke={color} strokeWidth="8"
+          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-xl font-black" style={{ color }}>{score}</span>
+        <span className="text-[9px] font-semibold" style={{ color: 'var(--ink-muted)' }}>/ 100</span>
+      </div>
+    </div>
+  )
+}
+
+function SeverityBadge({ severity }) {
+  const map = {
+    critical: { bg: '#fef2f2', color: '#dc2626', label: 'Critical' },
+    high:     { bg: '#fff7ed', color: '#ea580c', label: 'High' },
+    medium:   { bg: '#fefce8', color: '#ca8a04', label: 'Medium' },
+    low:      { bg: '#f0fdf4', color: '#16a34a', label: 'Low' },
+  }
+  const s = map[severity] || map.low
+  return (
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+      style={{ background: s.bg, color: s.color }}>{s.label}</span>
+  )
+}
+
+function BreakdownBar({ label, score, max }) {
+  const pct   = Math.round((score / max) * 100)
+  const color = pct >= 70 ? '#00c896' : pct >= 40 ? '#f59e0b' : '#ef4444'
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-xs" style={{ color: 'var(--ink-soft)' }}>
+        <span>{label}</span>
+        <span className="font-semibold">{score}<span className="font-normal opacity-60">/{max}</span></span>
+      </div>
+      <div className="h-1.5 rounded-full" style={{ background: 'var(--border)' }}>
+        <div className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${pct}%`, background: color }} />
+      </div>
+    </div>
+  )
+}
+
+// ─── Structured Review Panel ──────────────────────────────────────────────────
+// Renders the parsed review_json in a clean, sectioned layout.
+function ReviewPanel({ review, score }) {
+  if (!review) return null
+
+  const passed       = score >= 70
+  const verdictColor = passed ? '#00c896' : '#ef4444'
+  const verdictBg    = passed ? '#f0fdf4' : '#fff5f5'
+  const bd           = review.breakdown || {}
+
+  return (
+    <div className="space-y-4">
+
+      {/* Verdict banner */}
+      <div className="rounded-2xl p-5 flex items-center gap-5"
+        style={{ background: verdictBg, border: `1.5px solid ${verdictColor}40` }}>
+        <ScoreRing score={score} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-lg font-black" style={{ color: verdictColor }}>
+              {passed ? '✅ Passed' : '🔁 Needs Work'}
+            </span>
+            {review.confidence != null && (
+              <span className="text-xs px-2 py-0.5 rounded-full"
+                style={{ background: 'white', color: 'var(--ink-muted)' }}>
+                {Math.round(review.confidence * 100)}% confidence
+              </span>
+            )}
+          </div>
+          {review.review_summary && (
+            <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>{review.review_summary}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Score breakdown */}
+      <div className="rounded-2xl p-5 space-y-3"
+        style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+        <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Score Breakdown</p>
+        {Object.entries(BREAKDOWN_MAX).map(([key, max]) => (
+          <BreakdownBar key={key} label={BREAKDOWN_LABELS[key]} score={bd[key] || 0} max={max} />
+        ))}
+      </div>
+
+      {/* Strengths */}
+      {review.strengths?.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-2"
+          style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+          <p className="text-sm font-semibold" style={{ color: '#15803d' }}>✅ What you did well</p>
+          <ul className="space-y-1.5">
+            {review.strengths.map((s, i) => (
+              <li key={i} className="text-sm flex gap-2" style={{ color: '#166534' }}>
+                <span>•</span><span>{s}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Blocking issues */}
+      {review.blocking_issues?.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-3"
+          style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+          <p className="text-sm font-semibold" style={{ color: '#dc2626' }}>🚧 Blocking Issues</p>
+          {review.blocking_issues.map((b, i) => (
+            <div key={i} className="rounded-xl p-3 space-y-1.5"
+              style={{ background: '#fff', border: '1px solid #fecaca' }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <SeverityBadge severity={b.severity} />
+                {b.file && (
+                  <code className="text-xs px-1.5 py-0.5 rounded"
+                    style={{ background: '#f1f5f9', color: '#475569' }}>
+                    {b.file}{b.line ? `:${b.line}` : ''}
+                  </code>
+                )}
+              </div>
+              <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{b.issue}</p>
+              {b.why_it_matters && (
+                <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                  <span className="font-semibold">Why it matters: </span>{b.why_it_matters}
+                </p>
+              )}
+              {b.fix && (
+                <p className="text-xs px-2 py-1.5 rounded-lg"
+                  style={{ background: '#f0fdf4', color: '#166534' }}>
+                  <span className="font-semibold">Fix: </span>{b.fix}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Missing requirements */}
+      {review.missing_requirements?.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-2"
+          style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
+          <p className="text-sm font-semibold" style={{ color: '#c2410c' }}>📋 Missing Requirements</p>
+          <ul className="space-y-1">
+            {review.missing_requirements.map((m, i) => (
+              <li key={i} className="text-sm flex gap-2" style={{ color: '#9a3412' }}>
+                <span>✕</span><span>{m}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Improvements */}
+      {review.improvements?.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-2"
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>💡 Suggested Improvements</p>
+          <ul className="space-y-2">
+            {review.improvements.map((im, i) => (
+              <li key={i} className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+                {im.priority && (
+                  <span className="font-semibold text-xs uppercase mr-1"
+                    style={{ color: im.priority === 'high' ? '#ea580c' : '#ca8a04' }}>
+                    [{im.priority}]
+                  </span>
+                )}
+                {im.item || im}
+                {im.expected_outcome && (
+                  <span className="block text-xs mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+                    → {im.expected_outcome}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Next steps */}
+      {review.next_steps?.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-2"
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>🎯 Next Steps</p>
+          <ol className="space-y-1.5 list-none">
+            {review.next_steps.map((s, i) => (
+              <li key={i} className="text-sm flex gap-2 items-start" style={{ color: 'var(--ink-soft)' }}>
+                <span className="w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold flex-shrink-0 mt-0.5"
+                  style={{ background: 'var(--accent)', color: '#fff' }}>{i + 1}</span>
+                {s}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
+
 export default function TaskDetailPage() {
   const { id } = useParams()
   const router = useRouter()
@@ -78,24 +304,29 @@ export default function TaskDetailPage() {
 
       // Trigger AI review automatically
       try {
-        // Fetch the PR diff from GitHub
-        const prUrlObj = new URL(prUrl.trim())
-        const parts = prUrlObj.pathname.split('/')
-        const owner = parts[1]
-        const repo = parts[2]
-        const prNumber = parts[4]
-
-        const diffRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
-          { headers: { Accept: 'application/vnd.github.v3.diff' } }
-        )
-        const diff = await diffRes.text()
-
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+        const token = localStorage.getItem('token') || sessionStorage.getItem('token') || ''
+        let userId = localStorage.getItem('user_id') || ''
+        try {
+          const meRes = await fetch(`${backendUrl}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+          if (meRes.ok) {
+            const me = await meRes.json()
+            userId = me.id || me.user_id || userId
+          }
+        } catch {}
+
+        if (!userId) {
+          toast.error('Could not identify user. Please log in again.')
+          setActionLoading(false)
+          return
+        }
+
         await fetch(`${backendUrl}/api/mentor/review`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task_id: task.id, pr_diff: diff }),
+          body: JSON.stringify({ task_id: task.id, pr_url: prUrl.trim(), user_id: userId }),
         })
         toast.success('PR submitted! AI review started 🤖')
       } catch {
@@ -121,7 +352,7 @@ export default function TaskDetailPage() {
 
   if (!task) return null
 
-  const status   = STATUS_CONFIG[task.status]   || STATUS_CONFIG.todo
+  const status   = STATUS_CONFIG[task.status]    || STATUS_CONFIG.todo
   const priority = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium
   const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'done'
   const dueDate   = task.due_date
@@ -130,6 +361,20 @@ export default function TaskDetailPage() {
   const resources = task.resources ? task.resources.split('\n').filter(Boolean) : []
   const hasScore  = task.score !== null && task.score !== undefined
   const passed    = hasScore && task.score >= 70
+
+  // Parse latest_review — stored as JSON string inside task.feedback
+  let latestReview = null
+  if (task.feedback) {
+    try {
+      const feedbackObj = typeof task.feedback === 'string'
+        ? JSON.parse(task.feedback)
+        : task.feedback
+      // feedback is { latest_review: {...}, verdict, score, updated_at }
+      latestReview = feedbackObj.latest_review || feedbackObj
+    } catch {
+      // feedback might be plain text (old format) — ignore parse error
+    }
+  }
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--surface)' }}>
@@ -148,10 +393,10 @@ export default function TaskDetailPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-10">
-        <div className="animate-fade-up">
+        <div className="animate-fade-up space-y-5">
 
           {/* Main card */}
-          <div className="card p-8 mb-5">
+          <div className="card p-8">
             <div className="flex items-start justify-between gap-4 mb-4">
               <h1 className="text-2xl font-display" style={{ color: 'var(--ink)' }}>{task.title}</h1>
               <span className="badge shrink-0" style={{ color: status.color, background: status.bg }}>
@@ -163,7 +408,7 @@ export default function TaskDetailPage() {
             <div className="flex flex-wrap items-center gap-2 mb-6">
               <span className="badge" style={{ color: priority.color, background: priority.bg }}>{priority.label}</span>
               <span className="badge" style={{ color: 'var(--ink-soft)', background: 'var(--surface-2)' }}>
-                {task.intern_role.charAt(0).toUpperCase() + task.intern_role.slice(1)}
+                {task.intern_role?.charAt(0).toUpperCase() + task.intern_role?.slice(1)}
               </span>
               {dueDate && (
                 <span className="badge"
@@ -175,7 +420,8 @@ export default function TaskDetailPage() {
 
             {task.description && (
               <>
-                <h3 className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--ink-muted)' }}>Description</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
+                  style={{ color: 'var(--ink-muted)' }}>Description</h3>
                 <p className="text-sm leading-relaxed" style={{ color: 'var(--ink-soft)' }}>{task.description}</p>
               </>
             )}
@@ -183,8 +429,9 @@ export default function TaskDetailPage() {
 
           {/* Resources */}
           {resources.length > 0 && (
-            <div className="card p-6 mb-5">
-              <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--ink-muted)' }}>Resources</h3>
+            <div className="card p-6">
+              <h3 className="text-xs font-semibold uppercase tracking-wider mb-3"
+                style={{ color: 'var(--ink-muted)' }}>Resources</h3>
               <div className="flex flex-col gap-2">
                 {resources.map((url, i) => (
                   <a key={i} href={url} target="_blank" rel="noopener noreferrer"
@@ -199,59 +446,60 @@ export default function TaskDetailPage() {
             </div>
           )}
 
-          {/* Score & Feedback card — shows for both done and in_progress with score */}
+          {/* ── AI Review Result ── */}
           {hasScore && (
-            <div className="card p-6 mb-5" style={{
-              border: `1.5px solid ${passed ? 'var(--green)' : '#ef4444'}`,
-              background: passed ? 'var(--green-soft)' : '#fff5f5'
-            }}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-6 h-6 rounded-full flex items-center justify-center"
-                  style={{ background: passed ? 'var(--green)' : '#ef4444' }}>
-                  {passed ? (
-                    <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  )}
-                </div>
-                <h3 className="text-sm font-semibold font-display"
-                  style={{ color: passed ? '#065f46' : '#991b1b' }}>
-                  {passed ? 'AI Review Complete — Task Passed!' : 'AI Review Complete — Needs Improvement'}
+            <div className="card p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold font-display" style={{ color: 'var(--ink)' }}>
+                  AI Review Result
                 </h3>
-                <span className="ml-auto text-2xl font-display font-bold"
-                  style={{ color: passed ? 'var(--green)' : '#ef4444' }}>
-                  {task.score}/100
-                </span>
+                {!passed && (
+                  <span className="text-xs px-2 py-1 rounded-full font-semibold"
+                    style={{ background: '#fee2e2', color: '#991b1b' }}>
+                    Score below 70 — resubmit required
+                  </span>
+                )}
               </div>
 
-              {!passed && (
-                <div className="mb-3 p-3 rounded-lg" style={{ background: '#fee2e2', border: '1px solid #fecaca' }}>
-                  <p className="text-sm font-semibold" style={{ color: '#991b1b', margin: 0 }}>
-                    ⚠️ Score below 70 — Task not completed yet
-                  </p>
-                  <p className="text-sm mt-1" style={{ color: '#b91c1c', margin: '4px 0 0 0' }}>
-                    Review the feedback below, improve your code and resubmit using <code>internx pr</code>
-                  </p>
+              {/* If we have a full structured review, show it. Otherwise fallback to simple score */}
+              {latestReview && (latestReview.breakdown || latestReview.blocking_issues) ? (
+                <ReviewPanel review={latestReview} score={task.score} />
+              ) : (
+                /* Fallback: simple score banner when review_json isn't available */
+                <div className="rounded-2xl p-5 flex items-center gap-5"
+                  style={{ background: passed ? '#f0fdf4' : '#fff5f5', border: `1.5px solid ${passed ? '#00c896' : '#ef4444'}40` }}>
+                  <ScoreRing score={task.score} />
+                  <div>
+                    <p className="text-lg font-black" style={{ color: passed ? '#00c896' : '#ef4444' }}>
+                      {passed ? '✅ Passed' : '🔁 Needs Work'}
+                    </p>
+                    {task.feedback && typeof task.feedback === 'string' && !task.feedback.startsWith('{') && (
+                      <p className="text-sm mt-1 leading-relaxed" style={{ color: passed ? '#065f46' : '#991b1b' }}>
+                        {task.feedback}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {task.feedback && (
-                <p className="text-sm leading-relaxed whitespace-pre-line"
-                  style={{ color: passed ? '#065f46' : '#991b1b' }}>
-                  {task.feedback}
-                </p>
+              {!passed && (
+                <div className="mt-4 p-3 rounded-xl"
+                  style={{ background: '#fff5f5', border: '1px solid #fecaca' }}>
+                  <p className="text-sm font-medium" style={{ color: '#991b1b' }}>
+                    Fix the issues above and run{' '}
+                    <code style={{ background: '#fee2e2', padding: '1px 6px', borderRadius: 4 }}>internx pr</code>
+                    {' '}again to resubmit.
+                  </p>
+                </div>
               )}
             </div>
           )}
 
           {/* PR submitted — in review */}
           {task.github_pr_url && task.status === 'review' && (
-            <div className="card p-6 mb-5" style={{ border: '1.5px solid #dbeafe', background: 'var(--blue-soft)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: '#1e40af' }}>PR Submitted</h3>
+            <div className="card p-6" style={{ border: '1.5px solid #dbeafe', background: 'var(--blue-soft)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
+                style={{ color: '#1e40af' }}>PR Submitted</h3>
               <a href={task.github_pr_url} target="_blank" rel="noopener noreferrer"
                 className="text-sm font-medium break-all" style={{ color: 'var(--blue)' }}>
                 {task.github_pr_url}
@@ -261,18 +509,21 @@ export default function TaskDetailPage() {
 
           {/* Actions */}
           <div className="card p-6">
-            <h3 className="text-xs font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--ink-muted)' }}>Actions</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider mb-4"
+              style={{ color: 'var(--ink-muted)' }}>Actions</h3>
+
             {/* Ask AI Mentor — always visible */}
-<Link href={`/mentor?task_id=${task.id}`}
-  className="w-full flex items-center justify-center gap-2 py-3 mb-3"
-  style={{
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-    borderRadius: 12, textDecoration: 'none', color: 'white',
-    fontWeight: 600, fontSize: 14,
-    boxShadow: '0 2px 8px rgba(99,102,241,0.3)',
-  }}>
-  🤖 Ask AI Mentor
-</Link>
+            <Link href={`/mentor?task_id=${task.id}`}
+              className="w-full flex items-center justify-center gap-2 py-3 mb-3"
+              style={{
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                borderRadius: 12, textDecoration: 'none', color: 'white',
+                fontWeight: 600, fontSize: 14,
+                boxShadow: '0 2px 8px rgba(99,102,241,0.3)',
+              }}>
+              🤖 Ask AI Mentor
+            </Link>
+
             {task.status === 'todo' && (
               <button onClick={() => handleStatusChange('in_progress')} disabled={actionLoading}
                 className="btn-primary w-full justify-center py-3.5">
@@ -315,15 +566,6 @@ export default function TaskDetailPage() {
               </div>
             )}
 
-            {task.status === 'in_progress' && hasScore && !passed && (
-              <div className="mt-3 p-3 rounded-xl text-center"
-                style={{ background: '#fff5f5', border: '1px solid #fecaca' }}>
-                <p className="text-sm font-medium" style={{ color: '#991b1b' }}>
-                  Fix the issues above and run <code style={{ background: '#fee2e2', padding: '1px 6px', borderRadius: 4 }}>internx pr</code> again to resubmit
-                </p>
-              </div>
-            )}
-
             {task.status === 'done' && (
               <div className="text-center py-4">
                 <div className="text-3xl mb-2">🎉</div>
@@ -336,6 +578,7 @@ export default function TaskDetailPage() {
               </div>
             )}
           </div>
+
         </div>
       </main>
     </div>
