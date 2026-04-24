@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { Suspense, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuthStore } from '@/lib/store/authStore'
 import api from '@/lib/api'
 
-export default function CallbackPage() {
+function CallbackContent() {
   const router  = useRouter()
   const params  = useSearchParams()
   const setAuth = useAuthStore((s) => s.setAuth)
@@ -40,6 +40,10 @@ export default function CallbackPage() {
     exchange()
   }, [params])
 
+  return <CallbackLoading />
+}
+
+function CallbackLoading() {
   return (
     <main className="min-h-screen flex items-center justify-center" style={{ background: 'var(--surface)' }}>
       <div className="text-center flex flex-col items-center gap-4">
@@ -49,5 +53,13 @@ export default function CallbackPage() {
         <p className="text-sm" style={{ color: 'var(--ink-muted)' }}>Connecting your GitHub account</p>
       </div>
     </main>
+  )
+}
+
+export default function CallbackPage() {
+  return (
+    <Suspense fallback={<CallbackLoading />}>
+      <CallbackContent />
+    </Suspense>
   )
 }
