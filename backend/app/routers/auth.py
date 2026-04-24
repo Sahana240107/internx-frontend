@@ -136,6 +136,14 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     return UserResponse(**payload)
 
 
+@router.get("/my-project-id")
+async def get_my_project_id(current_user: dict = Depends(get_current_user)):
+    project_id = _get_active_project_id(current_user["id"])
+    if not project_id:
+        raise HTTPException(status_code=404, detail="No project found for this user")
+    return {"project_id": project_id}
+
+
 @router.put("/me", response_model=UserResponse)
 async def update_me(body: ProfileUpdate, current_user: dict = Depends(get_current_user)):
     updates = body.model_dump(exclude_none=True)
