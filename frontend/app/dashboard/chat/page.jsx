@@ -583,7 +583,6 @@ export default function ChatPage() {
   const [loading,       setLoading]       = useState(true)
   const [project,       setProject]       = useState(null)
   const [teamMembers,   setTeamMembers]   = useState([])
-  const [myGroupId,     setMyGroupId]     = useState(null)
   const [myRole,        setMyRole]        = useState(null)
   const [messages,      setMessages]      = useState([])
   const [input,         setInput]         = useState('')
@@ -630,46 +629,34 @@ export default function ChatPage() {
           api.get(`/api/chat/meet/${me.project_id}`).catch(() => ({ data: { meet_url: 'https://meet.google.com/' } })),
         ])
         setProject(projectRes.data)
-        // Store raw messages; will be filtered after teamMemberIds is computed below
         const rawMessages = msgsRes.data || []
         setMeetUrl(meetRes.data.meet_url || 'https://meet.google.com/')
 
-        // ── Use the existing /team API endpoint (bypasses RLS, runs server-side) ──
-        // It returns all members with their intern_role + group_id from group_members.
-        // We then filter client-side: same group_id + same intern_role as the current user.
+        // ── Filtering logic: same project_id + same intern_role ──
+        // /team returns all members of this project. We filter to those
+        // who share the current user's intern_role (e.g. both "frontend").
         const teamRes = await api.get(`/api/projects/${me.project_id}/team`)
-        const allTeam = teamRes.data?.team || []   // [{user_id, intern_role, group_id, name, avatar_url, ...}]
+        const allTeam = teamRes.data?.team || []  // [{user_id, intern_role, name, avatar_url, ...}]
 
-        // Find current user's own membership entry
-        const myEntry = allTeam.find(m => m.user_id === user.id)
-        const myGroupId_val  = myEntry?.group_id
-        const myRole_val     = myEntry?.intern_role
+        // The current user's role comes from /me (most reliable source)
+        const myRole_val = me.intern_role || null
+        if (myRole_val) setMyRole(myRole_val)
 
-        if (myGroupId_val)  setMyGroupId(myGroupId_val)
-        if (myRole_val)     setMyRole(myRole_val)
-
-        // Filter to same group + same role.
-        // Fall back to full team if group/role info is missing so the chat
-        // is never silently empty just because grouping data isn't populated yet.
-        const teammates = (myGroupId_val && myRole_val)
-          ? allTeam.filter(m =>
-              m.group_id    === myGroupId_val &&
-              m.intern_role === myRole_val
-            )
+        // Keep teammates who share the same intern_role.
+        // If role is unknown, fall back to showing the full team so chat
+        // is never silently empty.
+        const teammates = myRole_val
+          ? allTeam.filter(m => m.intern_role === myRole_val)
           : allTeam
 
-        // teammates already have name/avatar_url from _get_team_for_group enrichment
         setTeamMembers(teammates)
         const teamMemberIds = new Set(teammates.map(m => m.user_id))
+
         // Filter initial messages to only those from teammates
         setMessages(rawMessages.filter(m => teamMemberIds.has(m.sender_id)))
 
-        // Supabase Realtime: new messages scoped to this user's group+role channel
-        const groupId    = myGroupId_val
-        const internRole = myRole_val
-        const channelKey = groupId && internRole
-          ? `group_messages:${groupId}:${internRole}`
-          : `project_messages:${me.project_id}`
+        // Supabase Realtime: scoped to this project, filtered client-side by role
+        const channelKey = `project_messages:${me.project_id}:${myRole_val || 'all'}`
 
         const channel = supabase
           .channel(channelKey)
@@ -677,8 +664,8 @@ export default function ChatPage() {
             event: 'INSERT', schema: 'public', table: 'project_messages',
             filter: `project_id=eq.${me.project_id}`,
           }, async (payload) => {
-            // Only show messages from teammates with same group + role.
-            // When teamMemberIds is empty (grouping info unavailable) allow all.
+            // Only show messages from teammates with the same intern_role.
+            // If teamMemberIds is empty fall back to allowing all (safety net).
             const senderInTeam = teamMemberIds.size === 0 || teamMemberIds.has(payload.new.sender_id)
             if (!senderInTeam) return
             const newMsg = { ...payload.new }
