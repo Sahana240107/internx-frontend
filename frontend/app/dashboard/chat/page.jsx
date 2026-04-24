@@ -606,11 +606,22 @@ export default function ChatPage() {
       try {
         const meRes = await api.get('/api/auth/me')
         const me    = meRes.data
-        if (!me.project_id) { setLoading(false); return }
 
-        const { data: myProfile } = await supabase
-          .from('profiles').select('id, name, avatar_url, intern_role')
-          .eq('id', user.id).single()
+        // Guard: must have a real project_id (not null, not the placeholder UUID)
+        const PLACEHOLDER_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
+        if (!me.project_id || me.project_id === PLACEHOLDER_ID) {
+          setLoading(false)
+          return
+        }
+
+        // Build myProfile from /api/auth/me data — avoids a direct Supabase
+        // client call that can fail due to RLS policies (500 error).
+        const myProfile = {
+          id:          me.id   || user.id,
+          name:        me.name || me.email || 'You',
+          avatar_url:  me.avatar_url  || null,
+          intern_role: me.intern_role || null,
+        }
         myProfileRef.current = myProfile
 
         const [projectRes, msgsRes, meetRes] = await Promise.all([
@@ -639,7 +650,7 @@ export default function ChatPage() {
 
         // Filter to same group + same role
         const teammates = allTeam.filter(m =>
-          m.group_id   === myGroupId_val &&
+          m.group_id    === myGroupId_val &&
           m.intern_role === myRole_val
         )
 
@@ -669,10 +680,25 @@ export default function ChatPage() {
             if (newMsg.sender_id === user.id) {
               newMsg.profiles = myProfileRef.current
             } else {
-              const { data: profile } = await supabase
-                .from('profiles').select('id, name, avatar_url, intern_role')
-                .eq('id', newMsg.sender_id).single()
-              newMsg.profiles = profile
+              // Use already-loaded teammates list to avoid a direct Supabase
+              // client query which fails with RLS 500 errors.
+              const teammate = teammates.find(m => m.user_id === newMsg.sender_id)
+              if (teammate) {
+                newMsg.profiles = {
+                  id:          teammate.user_id,
+                  name:        teammate.name,
+                  avatar_url:  teammate.avatar_url || null,
+                  intern_role: teammate.intern_role || null,
+                }
+              } else {
+                // Fallback: fetch via backend (uses service key, bypasses RLS)
+                try {
+                  const profileRes = await api.get(`/api/auth/profile/${newMsg.sender_id}`)
+                  newMsg.profiles = profileRes.data
+                } catch {
+                  newMsg.profiles = { id: newMsg.sender_id, name: 'Teammate', avatar_url: null, intern_role: null }
+                }
+              }
             }
             setMessages(prev => {
               // Replace matching optimistic placeholder
