@@ -65,6 +65,7 @@ def _notify_project_members(sender_id: str, project_id: str, sender_name: str, p
 
 
 def _assert_member(user_id: str, project_id: str):
+    # Check direct profile membership (single-player / legacy)
     row = (
         db.table("profiles")
         .select("id")
@@ -73,8 +74,30 @@ def _assert_member(user_id: str, project_id: str):
         .limit(1)
         .execute()
     )
-    if not row.data:
-        raise HTTPException(403, "Not a member of this project")
+    if row.data:
+        return  # ✅ direct member
+
+    # Check multiplayer membership via project_groups → group_members
+    groups_res = (
+        db.table("project_groups")
+        .select("id")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    group_ids = [g["id"] for g in (groups_res.data or [])]
+    if group_ids:
+        gm_row = (
+            db.table("group_members")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .in_("group_id", group_ids)
+            .limit(1)
+            .execute()
+        )
+        if gm_row.data:
+            return  # ✅ group member
+
+    raise HTTPException(403, "Not a member of this project")
 
 
 @router.get("/messages/{project_id}")
