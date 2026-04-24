@@ -1,0 +1,20 @@
+{
+  "name": "internx-cli",
+  "version": "1.0.0",
+  "description": "InternX CLI - Setup projects in VS Code instantly",
+  "bin": {
+    "internx": "./internx.js"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "simple-git": "^3.19.0",
+    "open": "^9.1.0",
+    "axios": "^1.4.0",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "jsonwebtoken": "^9.0.0"
+  }
+}

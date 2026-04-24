@@ -1,0 +1,15 @@
+fastapi==0.111.1
+uvicorn[standard]==0.30.1
+python-dotenv==1.0.1
+pydantic==2.8.2
+pydantic-settings==2.3.4
+supabase==2.5.3
+httpx==0.27.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.9
+google-generativeai==0.7.2
+PyGithub==2.3.0
+pytest==8.2.2
+pytest-asyncio==0.23.7
+groq==0.9.0
