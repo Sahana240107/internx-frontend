@@ -648,11 +648,15 @@ export default function ChatPage() {
         if (myGroupId_val)  setMyGroupId(myGroupId_val)
         if (myRole_val)     setMyRole(myRole_val)
 
-        // Filter to same group + same role
-        const teammates = allTeam.filter(m =>
-          m.group_id    === myGroupId_val &&
-          m.intern_role === myRole_val
-        )
+        // Filter to same group + same role.
+        // Fall back to full team if group/role info is missing so the chat
+        // is never silently empty just because grouping data isn't populated yet.
+        const teammates = (myGroupId_val && myRole_val)
+          ? allTeam.filter(m =>
+              m.group_id    === myGroupId_val &&
+              m.intern_role === myRole_val
+            )
+          : allTeam
 
         // teammates already have name/avatar_url from _get_team_for_group enrichment
         setTeamMembers(teammates)
@@ -673,8 +677,9 @@ export default function ChatPage() {
             event: 'INSERT', schema: 'public', table: 'project_messages',
             filter: `project_id=eq.${me.project_id}`,
           }, async (payload) => {
-            // Only show messages from teammates with same group + role
-            const senderInTeam = !groupId || teamMemberIds.has(payload.new.sender_id)
+            // Only show messages from teammates with same group + role.
+            // When teamMemberIds is empty (grouping info unavailable) allow all.
+            const senderInTeam = teamMemberIds.size === 0 || teamMemberIds.has(payload.new.sender_id)
             if (!senderInTeam) return
             const newMsg = { ...payload.new }
             if (newMsg.sender_id === user.id) {
