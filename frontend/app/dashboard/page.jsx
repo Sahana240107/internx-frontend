@@ -396,7 +396,7 @@ function ProfileDropdown({ user, onLogout }) {
     .slice(0, 2)
     .toUpperCase()
 
-  const githubUrl = user?.github_url || user?.github || null
+  const githubUrl = user?.github_repo_url || user?.github_url || user?.github || null
 
   return (
     <div className="relative" ref={ref}>
