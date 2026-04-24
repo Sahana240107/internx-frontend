@@ -332,7 +332,7 @@ function ProfileDropdown({ user, profile, onLogout }) {
 
   const name     = profile?.name ?? user?.email?.split('@')[0] ?? 'Intern'
   const role     = profile?.intern_role ?? user?.intern_role ?? 'Intern'
-  const github   = profile?.github_repo_url ?? user?.github_repo_url ?? null
+  const github   = profile?.github_url ?? user?.github_url ?? null
   const avatar   = profile?.avatar_url ?? user?.avatar_url ?? null
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
@@ -550,7 +550,7 @@ export default function DashboardShell({ children }) {
     if (!user) return
     supabase
       .from('profiles')
-      .select('name, avatar_url, intern_role, github_repo_url')
+      .select('name, avatar_url, intern_role, github_url')
       .eq('id', user.id)
       .single()
       .then(({ data }) => { if (data) setProfile(data) })
