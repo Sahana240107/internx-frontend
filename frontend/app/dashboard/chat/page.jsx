@@ -11,7 +11,6 @@ const TOOLS  = { PEN: 'pen', ERASER: 'eraser', TEXT: 'text' }
 const COLORS = ['#1a1a2e','#5b4fff','#3b82f6','#00c896','#f59e0b','#ec4899','#ef4444','#ffffff']
 const SIZES  = [2, 4, 8, 16]
 
-// Unified emoji packs (all in one picker)
 const EMOJI_PACKS = {
   'Emoji':     ['😂','❤️','👍','😭','🙏','😍','🔥','🥺','😊','✨'],
   'Reactions': ['🎉','🚀','💯','👏','🤝','💪','🧠','⭐','🏆','🎯'],
@@ -82,7 +81,7 @@ function Avatar({ member, size = 36 }) {
   )
 }
 
-// ── EmojiPicker (unified: Emoji + Reactions + Work) ──────────────────────────
+// ── EmojiPicker ───────────────────────────────────────────────────────────────
 function EmojiPicker({ onPick, onClose }) {
   const [tab, setTab] = useState('Emoji')
   return (
@@ -116,7 +115,7 @@ function EmojiPicker({ onPick, onClose }) {
   )
 }
 
-// ── FilePreview (attachment chips above input) ────────────────────────────────
+// ── FilePreview ───────────────────────────────────────────────────────────────
 function FilePreview({ files, onRemove }) {
   if (!files.length) return null
   return (
@@ -139,8 +138,6 @@ function FilePreview({ files, onRemove }) {
 }
 
 // ── CollaborativeWhiteboard ───────────────────────────────────────────────────
-// All strokes are broadcast via Supabase Realtime broadcast (no DB write per stroke).
-// Everyone on the same project sees every stroke in real-time.
 function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClose }) {
   const canvasRef      = useRef(null)
   const drawing        = useRef(false)
@@ -152,7 +149,7 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
   const [color,    setColor]    = useState('#1a1a2e')
   const [size,     setSize]     = useState(4)
   const [peers,    setPeers]    = useState([])
-  const [textMode, setTextMode] = useState(null) // {x,y} in canvas coords
+  const [textMode, setTextMode] = useState(null)
 
   const peerColorMap = useRef({})
   const PEER_COLORS  = ['#ef4444','#f59e0b','#00c896','#3b82f6','#ec4899','#8b5cf6']
@@ -164,7 +161,6 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
     return peerColorMap.current[uid]
   }
 
-  // ── Init canvas ────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx    = canvas.getContext('2d')
@@ -174,15 +170,11 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   }, [])
 
-  // ── Realtime channel ───────────────────────────────────────────────────────
   useEffect(() => {
     const ch = supabase.channel(`whiteboard:${projectId}`, {
       config: { broadcast: { self: false } },
     })
-
-    ch.on('broadcast', { event: 'stroke' }, ({ payload }) => {
-      applyStroke(payload)
-    })
+    ch.on('broadcast', { event: 'stroke' }, ({ payload }) => { applyStroke(payload) })
     ch.on('broadcast', { event: 'clear' }, () => {
       const canvas = canvasRef.current
       if (!canvas) return
@@ -191,15 +183,9 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     })
     ch.on('broadcast', { event: 'cursor' }, ({ payload }) => {
-      setPeers(prev => {
-        const rest = prev.filter(p => p.id !== payload.id)
-        return [...rest, payload]
-      })
+      setPeers(prev => [...prev.filter(p => p.id !== payload.id), payload])
     })
-    ch.on('broadcast', { event: 'text_stamp' }, ({ payload }) => {
-      applyTextStamp(payload)
-    })
-
+    ch.on('broadcast', { event: 'text_stamp' }, ({ payload }) => { applyTextStamp(payload) })
     ch.on('presence', { event: 'sync' }, () => {
       const state = ch.presenceState()
       setPeers(Object.values(state).flat().filter(p => p.id !== userId))
@@ -208,7 +194,6 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
       const leftIds = leftPresences.map(p => p.id)
       setPeers(prev => prev.filter(p => !leftIds.includes(p.id)))
     })
-
     ch.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         await ch.track({ id: userId, name: myProfile?.name || 'You', color: peerColor(userId) })
@@ -222,26 +207,21 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
-    ctx.beginPath()
-    ctx.moveTo(fromX, fromY)
-    ctx.lineTo(toX, toY)
+    ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY)
     ctx.strokeStyle = t === TOOLS.ERASER ? '#ffffff' : c
     ctx.lineWidth   = t === TOOLS.ERASER ? s * 4 : s
-    ctx.lineCap     = 'round'
-    ctx.lineJoin    = 'round'
-    ctx.stroke()
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke()
   }
 
   function applyTextStamp({ x, y, char, color: c, size: s }) {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
-    ctx.font      = `${Math.max(s * 5, 20)}px sans-serif`
+    ctx.font = `${Math.max(s * 5, 20)}px sans-serif`
     ctx.fillStyle = c
     ctx.fillText(char, x, y)
   }
 
-  // ── Pointer utils ──────────────────────────────────────────────────────────
   const getPos = (e, canvas) => {
     const rect = canvas.getBoundingClientRect()
     const src  = e.touches ? e.touches[0] : e
@@ -251,7 +231,6 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
     }
   }
 
-  // ── Draw handlers ──────────────────────────────────────────────────────────
   const startDraw = (e) => {
     e.preventDefault()
     if (tool === TOOLS.TEXT) return
@@ -263,8 +242,6 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
     e.preventDefault()
     const canvas = canvasRef.current
     const pos    = getPos(e, canvas)
-
-    // Throttle cursor broadcast
     clearTimeout(cursorTimer.current)
     cursorTimer.current = setTimeout(() => {
       channelRef.current?.send({
@@ -272,18 +249,13 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
         payload: { id: userId, name: myProfile?.name, x: pos.x, y: pos.y, color: peerColor(userId) },
       })
     }, 40)
-
     if (!drawing.current) return
     const ctx  = canvas.getContext('2d')
     const from = lastPos.current
-    ctx.beginPath()
-    ctx.moveTo(from.x, from.y)
-    ctx.lineTo(pos.x, pos.y)
+    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(pos.x, pos.y)
     ctx.strokeStyle = tool === TOOLS.ERASER ? '#ffffff' : color
     ctx.lineWidth   = tool === TOOLS.ERASER ? size * 4 : size
-    ctx.lineCap     = 'round'
-    ctx.lineJoin    = 'round'
-    ctx.stroke()
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke()
     channelRef.current?.send({
       type: 'broadcast', event: 'stroke',
       payload: { fromX: from.x, fromY: from.y, toX: pos.x, toY: pos.y, color, size, tool },
@@ -318,7 +290,6 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
   }
 
   const cursorStyle = tool === TOOLS.ERASER ? 'cell' : tool === TOOLS.TEXT ? 'text' : 'crosshair'
-
   const TOOL_BTNS = [
     { id: TOOLS.PEN,    icon: '🖊',  label: 'Pen'    },
     { id: TOOLS.ERASER, icon: '⬜', label: 'Eraser' },
@@ -330,16 +301,11 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
       style={{ background: 'rgba(10,10,30,0.80)', backdropFilter: 'blur(6px)' }}>
       <div className="flex-1 flex flex-col max-w-6xl w-full mx-auto my-4 rounded-2xl overflow-hidden shadow-2xl"
         style={{ background: 'white' }}>
-
-        {/* Toolbar */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b flex-wrap"
           style={{ borderColor: 'var(--border)', background: '#fafafa' }}>
-
           <span className="font-bold text-sm flex-shrink-0" style={{ color: 'var(--ink)' }}>
             🖊 Live Whiteboard
           </span>
-
-          {/* Live peer indicators */}
           {peers.length > 0 && (
             <div className="flex items-center gap-1 ml-1">
               <div className="flex -space-x-1">
@@ -351,48 +317,34 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
                   </div>
                 ))}
               </div>
-              <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                {peers.length} live
-              </span>
+              <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>{peers.length} live</span>
             </div>
           )}
-
           <div className="w-px h-5 self-center mx-0.5" style={{ background: 'var(--border)' }} />
-
-          {/* Tool selector */}
           <div className="flex rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
             {TOOL_BTNS.map(t => (
               <button key={t.id} onClick={() => setTool(t.id)} title={t.label}
                 className="px-3 py-1.5 text-sm font-semibold transition-colors"
-                style={{
-                  background: tool === t.id ? '#5b4fff' : 'white',
-                  color: tool === t.id ? 'white' : 'var(--ink-muted)',
-                }}>
+                style={{ background: tool === t.id ? '#5b4fff' : 'white', color: tool === t.id ? 'white' : 'var(--ink-muted)' }}>
                 {t.icon}
               </button>
             ))}
           </div>
-
-          {/* Colors */}
           <div className="flex gap-1.5">
             {COLORS.map(c => (
               <button key={c}
                 onClick={() => { setColor(c); if (tool === TOOLS.ERASER) setTool(TOOLS.PEN) }}
                 className="rounded-full transition-transform hover:scale-110"
                 style={{
-                  width: 18, height: 18,
-                  background: c,
+                  width: 18, height: 18, background: c,
                   border: color === c ? '2.5px solid #5b4fff' : '1.5px solid #d1d5db',
                   transform: color === c ? 'scale(1.25)' : undefined,
                 }} />
             ))}
           </div>
-
-          {/* Sizes */}
           <div className="flex gap-1.5 items-center">
             {SIZES.map(s => (
-              <button key={s} onClick={() => setSize(s)}
-                className="rounded-full transition-all"
+              <button key={s} onClick={() => setSize(s)} className="rounded-full transition-all"
                 style={{
                   width: Math.max(s * 2.5, 10), height: Math.max(s * 2.5, 10),
                   background: size === s ? color : '#e2e2e8',
@@ -400,67 +352,44 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
                 }} />
             ))}
           </div>
-
           <div className="flex gap-2 ml-auto">
-            <button onClick={clearAll}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+            <button onClick={clearAll} className="px-3 py-1.5 rounded-xl text-xs font-semibold"
               style={{ background: '#fee2e2', color: '#ef4444', border: '1px solid #fca5a5' }}>
               🗑 Clear All
             </button>
-            <button onClick={onClose}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+            <button onClick={onClose} className="px-3 py-1.5 rounded-xl text-xs font-semibold"
               style={{ background: 'var(--surface-2)', color: 'var(--ink-muted)', border: '1px solid var(--border)' }}>
               ✕ Close
             </button>
           </div>
         </div>
-
-        {/* Canvas */}
         <div className="flex-1 relative overflow-hidden" style={{ cursor: cursorStyle }}>
           <canvas ref={canvasRef} className="absolute inset-0 w-full h-full"
             onMouseDown={startDraw} onMouseMove={drawMove} onMouseUp={stopDraw} onMouseLeave={stopDraw}
             onTouchStart={startDraw} onTouchMove={drawMove} onTouchEnd={stopDraw}
-            onClick={handleCanvasClick}
-          />
-
-          {/* Remote cursors (overlay) */}
+            onClick={handleCanvasClick} />
           {peers.map(p => p.x != null && (
             <div key={p.id + '-cursor'} className="absolute pointer-events-none"
               style={{
                 left: `${(p.x / (canvasRef.current?.width || 900)) * 100}%`,
                 top:  `${(p.y / (canvasRef.current?.height || 500)) * 100}%`,
-                transform: 'translate(-4px,-4px)',
-                zIndex: 10,
+                transform: 'translate(-4px,-4px)', zIndex: 10,
               }}>
-              <div className="w-3 h-3 rounded-full border-2 border-white"
-                style={{ background: p.color }} />
+              <div className="w-3 h-3 rounded-full border-2 border-white" style={{ background: p.color }} />
               <div className="text-[9px] font-bold px-1 rounded mt-0.5 whitespace-nowrap"
                 style={{ background: p.color, color: 'white' }}>{p.name}</div>
             </div>
           ))}
-
-          {/* Text stamp popover */}
           {textMode && (
             <div className="absolute z-20 p-3 rounded-2xl shadow-xl border"
               style={{
-                left: Math.min(
-                  (textMode.x / (canvasRef.current?.width || 900)) * 100 + '%',
-                ),
-                top: Math.min(
-                  (textMode.y / (canvasRef.current?.height || 500)) * 100 + '%',
-                ),
+                left: `${(textMode.x / (canvasRef.current?.width || 900)) * 100}%`,
+                top:  `${(textMode.y / (canvasRef.current?.height || 500)) * 100}%`,
                 background: 'white', borderColor: 'var(--border)', width: 256,
               }}>
               <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--ink-muted)' }}>
                 Stamp emoji or type text at this spot
               </p>
-              <div className="grid grid-cols-6 gap-1 mb-2">
-                {QUICK_EMOJIS.concat(STICKERS['Reactions'].slice(0, 2)).map(e => (
-                  <button key={e} onClick={() => stampText(e, textMode)}
-                    className="text-xl rounded-lg hover:scale-125 transition-transform flex items-center justify-center"
-                    style={{ height: 32 }}>{e}</button>
-                ))}
-              </div>
               <input autoFocus placeholder="Type text then Enter…"
                 className="w-full text-sm rounded-xl px-3 py-1.5 outline-none"
                 style={{ border: '1.5px solid var(--border)', color: 'var(--ink)' }}
@@ -468,8 +397,7 @@ function CollaborativeWhiteboard({ projectId, userId, myProfile, supabase, onClo
                   if (e.key === 'Enter' && e.target.value.trim()) stampText(e.target.value.trim(), textMode)
                   if (e.key === 'Escape') setTextMode(null)
                 }} />
-              <button onClick={() => setTextMode(null)}
-                className="mt-1 text-[10px]" style={{ color: 'var(--ink-muted)' }}>
+              <button onClick={() => setTextMode(null)} className="mt-1 text-[10px]" style={{ color: 'var(--ink-muted)' }}>
                 Cancel (Esc)
               </button>
             </div>
@@ -485,16 +413,13 @@ function MessageBubble({ item, isMe, showAvatar }) {
   const msg    = item.data
   const sender = msg.profiles || {}
 
-  // Sticker — large emoji sent as its own message
   if (msg.message_type === 'emoji') {
     return (
       <div className={`flex gap-2 mb-1 ${isMe ? 'flex-row-reverse' : ''}`}>
         {!isMe && showAvatar ? <Avatar member={sender} size={28} /> : !isMe && <div style={{ width: 28 }} />}
         <div>
           {!isMe && showAvatar && (
-            <p className="text-[10px] font-semibold mb-0.5 ml-1" style={{ color: 'var(--ink-muted)' }}>
-              {sender.name}
-            </p>
+            <p className="text-[10px] font-semibold mb-0.5 ml-1" style={{ color: 'var(--ink-muted)' }}>{sender.name}</p>
           )}
           <div className="text-5xl leading-none select-none" style={{ padding: '4px 0' }}>{msg.content}</div>
           <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-muted)', textAlign: isMe ? 'right' : 'left' }}>
@@ -505,7 +430,6 @@ function MessageBubble({ item, isMe, showAvatar }) {
     )
   }
 
-  // File / attachment
   if (msg.message_type === 'file') {
     let meta = {}
     try { meta = JSON.parse(msg.content) } catch { meta = { name: 'File', url: msg.content } }
@@ -518,10 +442,8 @@ function MessageBubble({ item, isMe, showAvatar }) {
             <p className="text-[10px] font-semibold mb-0.5 ml-1" style={{ color: 'var(--ink-muted)' }}>{sender.name}</p>
           )}
           {isImage ? (
-            <div className="rounded-2xl overflow-hidden shadow-sm"
-              style={{ border: '1.5px solid var(--border)', maxWidth: 240 }}>
-              <img src={meta.url} alt={meta.name} className="block w-full"
-                style={{ maxHeight: 220, objectFit: 'cover' }} />
+            <div className="rounded-2xl overflow-hidden shadow-sm" style={{ border: '1.5px solid var(--border)', maxWidth: 240 }}>
+              <img src={meta.url} alt={meta.name} className="block w-full" style={{ maxHeight: 220, objectFit: 'cover' }} />
               <div className="px-3 py-1.5 flex items-center gap-2" style={{ background: 'var(--surface-2)' }}>
                 <span className="text-[10px] truncate flex-1" style={{ color: 'var(--ink-muted)' }}>{meta.name}</span>
                 <span className="text-[10px]" style={{ color: 'var(--ink-muted)' }}>{formatTime(msg.created_at)}</span>
@@ -533,8 +455,7 @@ function MessageBubble({ item, isMe, showAvatar }) {
               style={{
                 background: isMe ? '#5b4fff' : 'white',
                 border: isMe ? 'none' : '1.5px solid var(--border)',
-                color: isMe ? 'white' : 'var(--ink)',
-                textDecoration: 'none',
+                color: isMe ? 'white' : 'var(--ink)', textDecoration: 'none',
               }}>
               <span className="text-2xl flex-shrink-0">{fileIcon(meta.name)}</span>
               <div className="min-w-0">
@@ -549,7 +470,6 @@ function MessageBubble({ item, isMe, showAvatar }) {
     )
   }
 
-  // Normal text
   return (
     <div className={`flex gap-2 mb-0.5 ${isMe ? 'flex-row-reverse' : ''}`}>
       {!isMe && showAvatar ? <Avatar member={sender} size={28} /> : !isMe && <div style={{ width: 28 }} />}
@@ -559,10 +479,8 @@ function MessageBubble({ item, isMe, showAvatar }) {
         )}
         <div className={`px-3 py-2 rounded-2xl inline-block ${isMe ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={{
-            background: isMe ? '#5b4fff' : 'white',
-            color:      isMe ? 'white'   : 'var(--ink)',
-            border:     isMe ? 'none'    : '1.5px solid var(--border)',
-            boxShadow:  '0 1px 2px rgba(0,0,0,0.06)',
+            background: isMe ? '#5b4fff' : 'white', color: isMe ? 'white' : 'var(--ink)',
+            border: isMe ? 'none' : '1.5px solid var(--border)', boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
           }}>
           <p className="text-sm leading-snug break-words whitespace-pre-wrap">{msg.content}</p>
           <p className={`text-[10px] mt-0.5 text-right ${isMe ? 'opacity-70' : ''}`}
@@ -575,12 +493,13 @@ function MessageBubble({ item, isMe, showAvatar }) {
   )
 }
 
-// ── Main ChatPage ──────────────────────────────────────────────────────────────
+// ── Main ChatPage ─────────────────────────────────────────────────────────────
 export default function ChatPage() {
   const { user } = useAuthStore()
   const supabase  = createClient()
 
   const [loading,       setLoading]       = useState(true)
+  const [loadError,     setLoadError]     = useState(null)   // ← NEW: surface real errors
   const [project,       setProject]       = useState(null)
   const [teamMembers,   setTeamMembers]   = useState([])
   const [myRole,        setMyRole]        = useState(null)
@@ -590,7 +509,7 @@ export default function ChatPage() {
   const [showBoard,     setShowBoard]     = useState(false)
   const [meetUrl,       setMeetUrl]       = useState('https://meet.google.com/')
   const [showEmoji,     setShowEmoji]     = useState(false)
-  const [attachedFiles, setAttachedFiles] = useState([]) // [{name,size,mime,dataUrl}]
+  const [attachedFiles, setAttachedFiles] = useState([])
 
   const messagesEndRef = useRef(null)
   const inputRef       = useRef(null)
@@ -602,116 +521,150 @@ export default function ChatPage() {
   useEffect(() => {
     if (!user) return
     const load = async () => {
+      setLoadError(null)
+
+      // ── Step 1: fetch /me ─────────────────────────────────────────────────
+      let me
       try {
         const meRes = await api.get('/api/auth/me')
-        const me    = meRes.data
+        me = meRes.data
+      } catch (err) {
+        console.error('[Chat] /api/auth/me failed:', err)
+        setLoadError(`Could not load your profile. ${err?.response?.status === 401 ? 'Please sign in again.' : 'Check your connection.'}`)
+        setLoading(false)
+        return
+      }
 
-        // Guard: must have a real project_id (not null, not the placeholder UUID)
-        const PLACEHOLDER_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
-        if (!me.project_id || me.project_id === PLACEHOLDER_ID) {
-          setLoading(false)
-          return
-        }
+      // ── Step 2: validate project_id ───────────────────────────────────────
+      const PLACEHOLDER_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
+      let projectId = me?.project_id
 
-        // Build myProfile from /api/auth/me data — avoids a direct Supabase
-        // client call that can fail due to RLS policies (500 error).
-        const myProfile = {
-          id:          me.id   || user.id,
-          name:        me.name || me.email || 'You',
-          avatar_url:  me.avatar_url  || null,
-          intern_role: me.intern_role || null,
-        }
-        myProfileRef.current = myProfile
+      if (!projectId || projectId === PLACEHOLDER_ID) {
+        // Fallback: try to resolve via group_members → project_groups
+        try {
+          const fallbackRes = await api.get('/api/auth/my-project-id').catch(() => null)
+          projectId = fallbackRes?.data?.project_id || null
+        } catch { /* ignore */ }
+      }
 
-        const [projectRes, msgsRes, meetRes] = await Promise.all([
-          api.get(`/api/projects/${me.project_id}`),
-          api.get(`/api/chat/messages/${me.project_id}`),
-          api.get(`/api/chat/meet/${me.project_id}`).catch(() => ({ data: { meet_url: 'https://meet.google.com/' } })),
-        ])
-        setProject(projectRes.data)
-        const rawMessages = msgsRes.data || []
-        setMeetUrl(meetRes.data.meet_url || 'https://meet.google.com/')
+      if (!projectId || projectId === PLACEHOLDER_ID) {
+        // No project — this is the normal "not yet joined" state, not an error
+        setLoading(false)
+        return
+      }
 
-        // ── Filtering logic: same project_id + same intern_role ──
-        // /team returns all members of this project. We filter to those
-        // who share the current user's intern_role (e.g. both "frontend").
-        const teamRes = await api.get(`/api/projects/${me.project_id}/team`)
-        const allTeam = teamRes.data?.team || []  // [{user_id, intern_role, name, avatar_url, ...}]
+      // ── Step 3: build myProfile ───────────────────────────────────────────
+      const myProfile = {
+        id:          me.id   || user.id,
+        name:        me.name || me.email || 'You',
+        avatar_url:  me.avatar_url  || null,
+        intern_role: me.intern_role || null,
+      }
+      myProfileRef.current = myProfile
 
-        // The current user's role comes from /me (most reliable source)
-        const myRole_val = me.intern_role || null
-        if (myRole_val) setMyRole(myRole_val)
+      // ── Step 4: fetch project ─────────────────────────────────────────────
+      let projectData = null
+      try {
+        const projectRes = await api.get(`/api/projects/${projectId}`)
+        projectData = projectRes.data
+      } catch (err) {
+        console.error('[Chat] /api/projects fetch failed:', err?.response?.status, err?.message)
+        setLoadError(`Could not load project (${err?.response?.status || 'network error'}). Try refreshing.`)
+        setLoading(false)
+        return
+      }
+      setProject(projectData)
 
-        // Keep teammates who share the same intern_role.
-        // If role is unknown, fall back to showing the full team so chat
-        // is never silently empty.
-        const teammates = myRole_val
+      // ── Step 5: fetch messages (non-fatal) ────────────────────────────────
+      let rawMessages = []
+      try {
+        const msgsRes = await api.get(`/api/chat/messages/${projectId}`)
+        rawMessages = msgsRes.data || []
+      } catch (err) {
+        console.warn('[Chat] messages fetch failed (non-fatal):', err?.response?.status)
+        // Continue — chat still works, just no history
+      }
+
+      // ── Step 6: fetch meet URL (non-fatal) ────────────────────────────────
+      try {
+        const meetRes = await api.get(`/api/chat/meet/${projectId}`)
+        setMeetUrl(meetRes.data?.meet_url || 'https://meet.google.com/')
+      } catch {
+        // Default already set
+      }
+
+      // ── Step 7: fetch team members (non-fatal) ────────────────────────────
+      let teammates = []
+      let myRole_val = me.intern_role || null
+      if (myRole_val) setMyRole(myRole_val)
+
+      try {
+        const teamRes = await api.get(`/api/projects/${projectId}/team`)
+        const allTeam = teamRes.data?.team || []
+        teammates = myRole_val
           ? allTeam.filter(m => m.intern_role === myRole_val)
           : allTeam
-
         setTeamMembers(teammates)
-        const teamMemberIds = new Set(teammates.map(m => m.user_id))
+      } catch (err) {
+        console.warn('[Chat] team fetch failed (non-fatal):', err?.response?.status)
+        // Continue without team filter
+      }
 
-        // Filter initial messages to only those from teammates
-        setMessages(rawMessages.filter(m => teamMemberIds.has(m.sender_id)))
+      // ── Step 8: filter messages by team ───────────────────────────────────
+      const teamMemberIds = new Set(teammates.map(m => m.user_id))
+      const filteredMessages = teamMemberIds.size > 0
+        ? rawMessages.filter(m => teamMemberIds.has(m.sender_id))
+        : rawMessages
+      setMessages(filteredMessages)
 
-        // Supabase Realtime: scoped to this project, filtered client-side by role
-        const channelKey = `project_messages:${me.project_id}:${myRole_val || 'all'}`
-
-        const channel = supabase
-          .channel(channelKey)
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'project_messages',
-            filter: `project_id=eq.${me.project_id}`,
-          }, async (payload) => {
-            // Only show messages from teammates with the same intern_role.
-            // If teamMemberIds is empty fall back to allowing all (safety net).
-            const senderInTeam = teamMemberIds.size === 0 || teamMemberIds.has(payload.new.sender_id)
-            if (!senderInTeam) return
-            const newMsg = { ...payload.new }
-            if (newMsg.sender_id === user.id) {
-              newMsg.profiles = myProfileRef.current
+      // ── Step 9: Supabase Realtime ─────────────────────────────────────────
+      const channelKey = `project_messages:${projectId}:${myRole_val || 'all'}`
+      const channel = supabase
+        .channel(channelKey)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'project_messages',
+          filter: `project_id=eq.${projectId}`,
+        }, async (payload) => {
+          const senderInTeam = teamMemberIds.size === 0 || teamMemberIds.has(payload.new.sender_id)
+          if (!senderInTeam) return
+          const newMsg = { ...payload.new }
+          if (newMsg.sender_id === user.id) {
+            newMsg.profiles = myProfileRef.current
+          } else {
+            const teammate = teammates.find(m => m.user_id === newMsg.sender_id)
+            if (teammate) {
+              newMsg.profiles = {
+                id:          teammate.user_id,
+                name:        teammate.name,
+                avatar_url:  teammate.avatar_url || null,
+                intern_role: teammate.intern_role || null,
+              }
             } else {
-              // Use already-loaded teammates list to avoid a direct Supabase
-              // client query which fails with RLS 500 errors.
-              const teammate = teammates.find(m => m.user_id === newMsg.sender_id)
-              if (teammate) {
-                newMsg.profiles = {
-                  id:          teammate.user_id,
-                  name:        teammate.name,
-                  avatar_url:  teammate.avatar_url || null,
-                  intern_role: teammate.intern_role || null,
-                }
-              } else {
-                // Fallback: fetch via backend (uses service key, bypasses RLS)
-                try {
-                  const profileRes = await api.get(`/api/auth/profile/${newMsg.sender_id}`)
-                  newMsg.profiles = profileRes.data
-                } catch {
-                  newMsg.profiles = { id: newMsg.sender_id, name: 'Teammate', avatar_url: null, intern_role: null }
-                }
+              try {
+                const profileRes = await api.get(`/api/auth/profile/${newMsg.sender_id}`)
+                newMsg.profiles = profileRes.data
+              } catch {
+                newMsg.profiles = { id: newMsg.sender_id, name: 'Teammate', avatar_url: null, intern_role: null }
               }
             }
-            setMessages(prev => {
-              // Replace matching optimistic placeholder
-              const oidx = prev.findIndex(
-                m => m._optimistic && m.content === newMsg.content && m.sender_id === newMsg.sender_id
-              )
-              if (oidx !== -1) {
-                const next = [...prev]; next[oidx] = newMsg; return next
-              }
-              if (prev.find(m => m.id === newMsg.id)) return prev
-              return [...prev, newMsg]
-            })
+          }
+          setMessages(prev => {
+            const oidx = prev.findIndex(
+              m => m._optimistic && m.content === newMsg.content && m.sender_id === newMsg.sender_id
+            )
+            if (oidx !== -1) {
+              const next = [...prev]; next[oidx] = newMsg; return next
+            }
+            if (prev.find(m => m.id === newMsg.id)) return prev
+            return [...prev, newMsg]
           })
-          .subscribe()
-        channelRef.current = channel
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setLoading(false)
-      }
+        })
+        .subscribe()
+      channelRef.current = channel
+
+      setLoading(false)
     }
+
     load()
     return () => { channelRef.current?.unsubscribe() }
   }, [user])
@@ -734,6 +687,7 @@ export default function ChatPage() {
     setMessages(prev => [...prev, msg])
     return msg
   }
+
   const rollback = (id, restoreInput) => {
     setMessages(prev => prev.filter(m => m.id !== id))
     if (restoreInput !== undefined) setInput(restoreInput)
@@ -766,7 +720,6 @@ export default function ChatPage() {
     } catch (err) { rollback(opt.id) }
   }
 
-  // ── emoji → append to input ───────────────────────────────────────────────
   const appendEmoji = (emoji) => {
     setInput(prev => prev + emoji)
     inputRef.current?.focus()
@@ -791,13 +744,11 @@ export default function ChatPage() {
     setSending(true)
     const toSend = [...attachedFiles]
     setAttachedFiles([])
-
     for (const f of toSend) {
-      // Convert base64 dataUrl → Blob → File for multipart upload
       let savedMsg = null
       const opt = addOptimistic({
         content:      JSON.stringify({ name: f.name, size: f.size, mime: f.mime, url: f.dataUrl }),
-        message_type: 'file',   // real type — DB now allows 'file'
+        message_type: 'file',
       })
       try {
         const fetchRes = await fetch(f.dataUrl)
@@ -806,10 +757,6 @@ export default function ChatPage() {
         const formData = new FormData()
         formData.append('file',       fileObj)
         formData.append('project_id', project.id)
-
-        // Use api axios so the Authorization Bearer token is sent.
-        // Setting Content-Type to undefined lets the browser set the
-        // correct multipart/form-data boundary automatically.
         const res = await api.post('/api/chat/upload', formData, {
           headers: { 'Content-Type': undefined },
         })
@@ -818,7 +765,6 @@ export default function ChatPage() {
         console.error('File upload failed:', err)
         rollback(opt.id)
       }
-      // Replace optimistic with real saved message if we got one
       if (savedMsg) {
         setMessages(prev => {
           const idx = prev.findIndex(m => m.id === opt.id)
@@ -828,8 +774,6 @@ export default function ChatPage() {
         })
       }
     }
-
-    // Send any typed caption as a separate text message
     if (input.trim()) {
       const text = input.trim(); setInput('')
       const opt  = addOptimistic({ content: text, message_type: 'text' })
@@ -860,6 +804,23 @@ export default function ChatPage() {
     </div>
   )
 
+  // ── NEW: show the actual error so you can debug it in production ──────────
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <p className="text-3xl">⚠️</p>
+      <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Chat failed to load</p>
+      <p className="text-xs text-center max-w-xs" style={{ color: 'var(--ink-muted)' }}>{loadError}</p>
+      <button
+        onClick={() => { setLoadError(null); setLoading(true); }}
+        className="px-4 py-2 rounded-xl text-xs font-semibold text-white"
+        style={{ background: '#5b4fff' }}
+        // Re-trigger load by remounting — simplest approach
+      >
+        Retry
+      </button>
+    </div>
+  )
+
   if (!project) return (
     <div className="flex flex-col items-center justify-center py-20 gap-3">
       <p className="text-2xl">💬</p>
@@ -882,7 +843,6 @@ export default function ChatPage() {
         />
       )}
 
-      {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept={FILE_ACCEPT} multiple className="hidden"
         onChange={handleFileChange} />
 
@@ -956,8 +916,7 @@ export default function ChatPage() {
             const prevMsg  = prev?.type === 'msg' ? prev.data : null
             const showAvatar = !isMe && (!prevMsg || prevMsg.sender_id !== msg.sender_id)
             return (
-              <MessageBubble key={msg.id} item={item} isMe={isMe}
-                showAvatar={showAvatar} prevIsMe={prevMsg?.sender_id === user?.id} />
+              <MessageBubble key={msg.id} item={item} isMe={isMe} showAvatar={showAvatar} />
             )
           })}
           <div ref={messagesEndRef} />
@@ -965,13 +924,9 @@ export default function ChatPage() {
 
         {/* ── Input bar ───────────────────────────────────────────────────── */}
         <div className="flex-shrink-0 border-t" style={{ background: 'white', borderColor: 'var(--border)' }}>
-          {/* Attachment chips */}
           <FilePreview files={attachedFiles} onRemove={removeAttached} />
-
           <div className="flex items-end gap-1.5 px-3 py-2.5" onClick={e => e.stopPropagation()}>
-
-            {/* Attach file */}
-            <button onClick={() => fileInputRef.current?.click()} title="Attach file (image / PDF / Word / Excel)"
+            <button onClick={() => fileInputRef.current?.click()} title="Attach file"
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 hover:scale-105 transition-transform"
               style={{ background: 'var(--surface-2)', border: '1.5px solid var(--border)', color: 'var(--ink-muted)' }}>
               <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -979,11 +934,8 @@ export default function ChatPage() {
                   strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
-
-            {/* Emoji (unified picker: append to text or send as emoji message) */}
             <div className="relative flex-shrink-0">
-              <button onClick={e => { e.stopPropagation(); setShowEmoji(p => !p) }}
-                title="Emoji"
+              <button onClick={e => { e.stopPropagation(); setShowEmoji(p => !p) }} title="Emoji"
                 className="w-9 h-9 rounded-xl flex items-center justify-center hover:scale-105 transition-transform text-lg"
                 style={{
                   background: showEmoji ? '#ede9fe' : 'var(--surface-2)',
@@ -992,14 +944,9 @@ export default function ChatPage() {
                 😊
               </button>
               {showEmoji && (
-                <EmojiPicker
-                  onPick={(e) => { appendEmoji(e) }}
-                  onClose={() => setShowEmoji(false)}
-                />
+                <EmojiPicker onPick={appendEmoji} onClose={() => setShowEmoji(false)} />
               )}
             </div>
-
-            {/* Live whiteboard */}
             <button onClick={() => setShowBoard(true)} title="Open live whiteboard"
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 hover:scale-105 transition-transform"
               style={{ background: 'var(--surface-2)', border: '1.5px solid var(--border)', color: 'var(--ink-muted)' }}>
@@ -1009,8 +956,6 @@ export default function ChatPage() {
                 <path d="M7 10l2 2 5-5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
-
-            {/* Text input */}
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
@@ -1021,16 +966,11 @@ export default function ChatPage() {
                 rows={1}
                 className="w-full resize-none rounded-2xl px-4 py-2.5 text-sm outline-none"
                 style={{
-                  background: 'var(--surface-2)',
-                  border: '1.5px solid var(--border)',
-                  color: 'var(--ink)',
-                  maxHeight: 120,
-                  lineHeight: '1.5',
+                  background: 'var(--surface-2)', border: '1.5px solid var(--border)',
+                  color: 'var(--ink)', maxHeight: 120, lineHeight: '1.5',
                 }}
               />
             </div>
-
-            {/* Send */}
             <button onClick={sendMessage} disabled={!canSend || sending}
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all hover:scale-105"
               style={{
@@ -1045,7 +985,6 @@ export default function ChatPage() {
             </button>
           </div>
         </div>
-
       </div>
     </>
   )
