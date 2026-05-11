@@ -22,11 +22,13 @@ app.add_middleware(
 )
 
 from app.routers import auth, tasks, projects, mentor, chat
+from app.routers.admin import router as admin_router
+from app.routers.recruiter import router as recruiter_router
+from app.routers.recruiter_admin_auth import router as recruiter_admin_auth_router
 from app.routers.mid_sprint_change import router as mid_sprint_change_router
 from app.routers.adaptive import router as adaptive_router
 from app.routers.standup import router as standup_router
 
-app.include_router(standup_router)
 app.include_router(auth.router,              prefix="/api/auth", tags=["Auth"])
 app.include_router(tasks.router)
 app.include_router(projects.router)
@@ -36,8 +38,12 @@ app.include_router(tickets_router)
 app.include_router(notifications_router)
 app.include_router(github_router)
 app.include_router(team_hub.router)
+app.include_router(admin_router)
+app.include_router(recruiter_router)
+app.include_router(recruiter_admin_auth_router)
 app.include_router(mid_sprint_change_router)
 app.include_router(adaptive_router)
+app.include_router(standup_router)
 
 @app.get("/")
 def root():
