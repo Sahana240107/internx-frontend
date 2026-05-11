@@ -13,23 +13,30 @@ router = APIRouter()
 
 def _get_active_project_id(user_id: str) -> str | None:
     """
-    Returns the user's active project_id using the real schema:
-      group_members → project_groups.project_id
-    Falls back to profiles.project_id if not found.
+    Returns the user's active project_id.
+    FIX: Was using nested PostgREST join .select("project_groups(project_id)")
+    which caused Cloudflare 1101. Now uses two flat queries.
     """
-    result = (
+    gm = (
         db.table("group_members")
-        .select("project_groups(project_id)")
+        .select("group_id")
         .eq("user_id", user_id)
         .limit(1)
         .execute()
     )
-    if result.data:
-        pg = result.data[0].get("project_groups")
-        if isinstance(pg, dict) and pg.get("project_id"):
-            return pg["project_id"]
+    if gm.data and gm.data[0].get("group_id"):
+        group_id = gm.data[0]["group_id"]
+        pg = (
+            db.table("project_groups")
+            .select("project_id")
+            .eq("id", group_id)
+            .limit(1)
+            .execute()
+        )
+        if pg.data and pg.data[0].get("project_id"):
+            return pg.data[0]["project_id"]
 
-    # Fallback: profiles.project_id (set by /join endpoint)
+    # Fallback: profiles.project_id
     profile = db.table("profiles").select("project_id").eq("id", user_id).limit(1).execute()
     if profile.data and profile.data[0].get("project_id"):
         return profile.data[0]["project_id"]
@@ -122,14 +129,12 @@ async def github_callback(body: GitHubCallbackRequest):
 async def get_me(current_user: dict = Depends(get_current_user)):
     payload = dict(current_user)
 
-    # Resolve project_id from group_members (real schema), not project_members
     project_id = _get_active_project_id(current_user["id"])
     if project_id:
         payload["project_id"] = project_id
     elif not payload.get("project_id"):
         payload["project_id"] = None
 
-    # Legacy fields — not used in the multiplayer schema
     payload.setdefault("cohort_id", None)
     payload.setdefault("team_role", None)
 

@@ -92,6 +92,16 @@ const SIDE_NAV = [
     ),
   },
   {
+    href: '/dashboard/standup',
+    label: 'Standup',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ width: 20, height: 20 }}>
+        <path d="M10 3v7l4 2" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="10" cy="10" r="8" />
+      </svg>
+    ),
+  },
+  {
     href: '/dashboard/review',
     label: 'Review',
     icon: (
@@ -754,20 +764,46 @@ export default function DashboardPage() {
     return () => clearTimeout(timer)
   }, [user])
 
-  const loadData = async () => {
+  const loadData = async (opts = {}) => {
+    const { silent = false } = opts
     try {
-      const [tasksRes, sprintRes] = await Promise.all([
-        taskApi.getMyTasks(),
+      // Fetch sprint first — my-tasks now returns only the active sprint's tasks
+      const [sprintRes, tasksRes] = await Promise.all([
         taskApi.getActiveSprint().catch(() => ({ data: [] })),
+        taskApi.getMyTasks(),
       ])
-      setTasks(Array.isArray(tasksRes.data) ? tasksRes.data : [])
-      setSprint(Array.isArray(sprintRes.data) ? (sprintRes.data[0] || null) : null)
+
+      const activeSprint = Array.isArray(sprintRes.data) ? (sprintRes.data[0] || null) : null
+      const allTasks     = Array.isArray(tasksRes.data)  ? tasksRes.data : []
+
+      // my-tasks already filters to the active sprint on the backend,
+      // but we double-filter client-side as a safety net.
+      const sprintTasks = activeSprint
+        ? allTasks.filter(t => t.sprint_id === activeSprint.id)
+        : allTasks
+
+      // Notify when the sprint changes (backend advanced the team to a new sprint)
+      setSprint(prev => {
+        if (prev && activeSprint && prev.id !== activeSprint.id) {
+          toast.success(`🚀 New sprint unlocked: ${activeSprint.title}`, { duration: 6000 })
+        }
+        return activeSprint
+      })
+
+      setTasks(sprintTasks)
     } catch {
-      toast.error('Failed to load tasks')
+      if (!silent) toast.error('Failed to load tasks')
     } finally {
       setLoading(false)
     }
   }
+
+  // Poll every 30 s so the frontend learns when the backend advances the sprint
+  // (the engine runs in a background task after the last task is marked done).
+  useEffect(() => {
+    const pollInterval = setInterval(() => { loadData({ silent: true }) }, 30000)
+    return () => clearInterval(pollInterval)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogout = () => {
     clearAuth()
@@ -898,27 +934,64 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            {/* Sprint progress */}
-            {sprint && (
-              <div className="card p-5 animate-fade-up stagger-2">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Sprint — {sprint.title}</span>
-                  <span className="text-sm font-bold" style={{ color: 'var(--accent)' }}>{progress}%</span>
+            {/* Sprint card — always shown (shows "no sprint" nudge when null) */}
+            <div className="card p-5 animate-fade-up stagger-2">
+              {sprint ? (
+                <>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🏃</span>
+                      <span className="text-sm font-bold font-display" style={{ color: 'var(--ink)' }}>
+                        {sprint.title}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                        ACTIVE
+                      </span>
+                    </div>
+                    <span className="text-sm font-bold" style={{ color: 'var(--accent)' }}>{progress}%</span>
+                  </div>
+                  {sprint.description && (
+                    <p className="text-xs mb-3 line-clamp-1" style={{ color: 'var(--ink-muted)' }}>
+                      {sprint.description}
+                    </p>
+                  )}
+                  <div className="h-2 rounded-full overflow-hidden mb-2" style={{ background: 'var(--surface-2)' }}>
+                    <div className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${progress}%`, background: 'linear-gradient(90deg, var(--accent) 0%, #a78bfa 100%)' }} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                      📅 {sprint.start_date
+                        ? new Date(sprint.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                        : '—'}
+                    </span>
+                    <span className="text-xs font-medium" style={{ color: 'var(--ink-muted)' }}>
+                      {stats.completed}/{stats.total} tasks done
+                    </span>
+                    <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                      {sprint.end_date
+                        ? new Date(sprint.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                        : '—'} 📅
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">⏳</span>
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>No active sprint yet</p>
+                    <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                      {project
+                        ? project.project_status === 'open'
+                          ? 'Sprint starts once your full team has joined the project.'
+                          : 'Sprint will be created shortly — check back in a moment.'
+                        : 'Join a project to get your first sprint assigned.'}
+                    </p>
+                  </div>
                 </div>
-                <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
-                  <div className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${progress}%`, background: 'linear-gradient(90deg, var(--accent) 0%, #a78bfa 100%)' }} />
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                    {new Date(sprint.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                  </span>
-                  <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                    {new Date(sprint.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                  </span>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Kanban */}
             <div className="animate-fade-up stagger-3">

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { StatusBadge, PriorityBadge } from './StatusBadge'
+import { MidSprintChangeTag } from './MidSprintChangeBanner'
 
 export function TaskCard({ task }) {
   const router = useRouter()
@@ -11,14 +12,18 @@ export function TaskCard({ task }) {
     <div
       onClick={() => router.push(`/internship/tasks/${task.id}`)}
       className="p-4 rounded-2xl cursor-pointer transition-all duration-200"
-      style={{ background: 'white', border: '1.5px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}
+      style={{
+        background: task.mid_sprint_changed ? '#fff7ed' : 'white',
+        border: `1.5px solid ${task.mid_sprint_changed ? '#fb923c' : 'var(--border)'}`,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+      }}
       onMouseEnter={e => {
-        e.currentTarget.style.borderColor = 'var(--accent)'
+        e.currentTarget.style.borderColor = task.mid_sprint_changed ? '#ea580c' : 'var(--accent)'
         e.currentTarget.style.transform   = 'translateY(-2px)'
         e.currentTarget.style.boxShadow   = '0 4px 16px rgba(91,79,255,0.1)'
       }}
       onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--border)'
+        e.currentTarget.style.borderColor = task.mid_sprint_changed ? '#fb923c' : 'var(--border)'
         e.currentTarget.style.transform   = 'translateY(0)'
         e.currentTarget.style.boxShadow   = '0 1px 3px rgba(0,0,0,0.04)'
       }}>
@@ -27,7 +32,10 @@ export function TaskCard({ task }) {
           style={{ color: 'var(--ink)', fontFamily: 'Syne, sans-serif' }}>
           {task.title}
         </h3>
-        <StatusBadge status={task.status} />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {task.mid_sprint_changed && <MidSprintChangeTag />}
+          <StatusBadge status={task.status} />
+        </div>
       </div>
       <p className="text-xs line-clamp-2 mb-3" style={{ color: 'var(--ink-muted)' }}>{task.description}</p>
       <div className="flex items-center justify-between">

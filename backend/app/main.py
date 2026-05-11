@@ -2,7 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.routers.tickets import router as tickets_router
-from app.routers.notifications import router as notifications_router  # ← add this
+from app.routers.notifications import router as notifications_router
+from app.routers.github import router as github_router
+from app.routers import team_hub
 
 app = FastAPI(
     title="InternX API",
@@ -20,13 +22,22 @@ app.add_middleware(
 )
 
 from app.routers import auth, tasks, projects, mentor, chat
-app.include_router(auth.router,         prefix="/api/auth",   tags=["Auth"])
+from app.routers.mid_sprint_change import router as mid_sprint_change_router
+from app.routers.adaptive import router as adaptive_router
+from app.routers.standup import router as standup_router
+
+app.include_router(standup_router)
+app.include_router(auth.router,              prefix="/api/auth", tags=["Auth"])
 app.include_router(tasks.router)
 app.include_router(projects.router)
 app.include_router(mentor.router)
 app.include_router(chat.router)
 app.include_router(tickets_router)
-app.include_router(notifications_router)  # ← add this
+app.include_router(notifications_router)
+app.include_router(github_router)
+app.include_router(team_hub.router)
+app.include_router(mid_sprint_change_router)
+app.include_router(adaptive_router)
 
 @app.get("/")
 def root():

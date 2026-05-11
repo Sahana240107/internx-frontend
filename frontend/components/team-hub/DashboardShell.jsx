@@ -66,6 +66,16 @@ const SIDE_NAV = [
     ),
   },
   {
+    href: '/dashboard/standup',
+    label: 'Standup',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ width: 20, height: 20 }}>
+        <path d="M10 3v7l4 2" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="10" cy="10" r="8" />
+      </svg>
+    ),
+  },
+  {
     href: '/dashboard/review',
     label: 'Review',
     icon: (

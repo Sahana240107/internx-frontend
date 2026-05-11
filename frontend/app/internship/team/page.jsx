@@ -96,7 +96,7 @@ export default function TeamPage() {
   if (!project || !teamData) return null
 
   const isActive = project.project_status === 'active'
-  const repoUrl = project.internx_repo_url
+  const repoUrl = teamData?.internx_repo || project.internx_repo_url
   const teamRoles = project.team_roles || (project.intern_role ? { [project.intern_role]: 1 } : {})
   const totalSlots = Object.values(teamRoles).reduce((a, b) => a + b, 0)
   const filledSlots = teamData.team?.length || 0

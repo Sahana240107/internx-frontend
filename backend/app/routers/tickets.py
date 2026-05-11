@@ -134,6 +134,22 @@ async def list_tickets(
     all_tickets.sort(key=lambda t: t.get("created_at") or "", reverse=True)
     return _enrich_tickets(all_tickets)
 
+@router.get("/{ticket_id}")
+async def get_ticket_by_id(
+    ticket_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get a single ticket by ID."""
+    result = (
+        db.table("tickets")
+        .select("*")
+        .eq("id", ticket_id)
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return _enrich_tickets([result.data])[0]
 
 @router.post("")
 async def create_ticket(

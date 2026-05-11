@@ -20,10 +20,19 @@ Membership flow:
      Repo name = {project-slug}-g{first-8-chars-of-group-id}
      so multiple groups of the same project never collide.
 
-Required SQL (run once in Supabase):
-  alter table public.project_groups
-    add column if not exists repo_name text,
-    add column if not exists repo_url  text;
+FIX: assign_role_tasks_to_user was being called in the "already in project"
+early-return path AND again in the normal join path. This caused
+initialise_sprint_for_intern to run twice, which:
+  - Reset seeded tasks to the pool twice
+  - Assigned initial tasks twice (bypassing the idempotency guard on the
+    second call because the first call had already consumed the pool tasks)
+Result: intern ended up with 4–6 tasks instead of 2.
+Fix: removed the assign_role_tasks_to_user call from the early-return path.
+The engine is idempotent — it only needs to run once at join time.
+
+FIX 2: _get_user_group_membership used a nested PostgREST join
+(.select("*, project_groups(id, project_id, status)")) which crashes
+Cloudflare with Error 1101. Replaced with two flat queries.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -61,17 +70,23 @@ def _get_user_group_membership(user_id: str) -> dict | None:
     """
     Returns the user's active group_members row (with group_id, intern_role, etc.)
     or None if they haven't joined any group yet.
+
+    FIX: Old code used .select("*, project_groups(id, project_id, status)") —
+    a nested PostgREST join that crashes Cloudflare with Error 1101.
+    Now returns the raw group_members row only. Callers that need project_id
+    do a separate flat query on project_groups.
     """
     result = (
         db.table("group_members")
-        .select("*, project_groups(id, project_id, status)")
+        .select("id, group_id, user_id, intern_role, github_repo_url, joined_at")
         .eq("user_id", user_id)
+        .order("joined_at", desc=True)
+        .limit(1)
         .execute()
     )
     if not result.data:
         return None
-    # Return the most recently joined membership
-    return sorted(result.data, key=lambda r: r.get("joined_at") or "", reverse=True)[0]
+    return result.data[0]
 
 
 def _get_active_group_for_project(project_id: str) -> dict | None:
@@ -86,7 +101,6 @@ def _get_active_group_for_project(project_id: str) -> dict | None:
         .execute()
     )
     groups = result.data or []
-    # Prefer forming groups first, then active
     for status in ("forming", "active"):
         for g in groups:
             if g.get("status") == status:
@@ -99,7 +113,6 @@ def _get_or_create_group(project_id: str, project: dict) -> dict:
     group = _get_active_group_for_project(project_id)
     if group and group.get("status") == "forming":
         return group
-    # Create a new forming group
     new_group = db.table("project_groups").insert({
         "id":           str(uuid.uuid4()),
         "project_id":   project_id,
@@ -151,7 +164,7 @@ def _get_team_for_group(group_id: str) -> list[dict]:
     for m in members_res.data:
         profile = profile_map.get(m["user_id"], {})
         team.append({
-            "membership_id":   m["id"],          # group_members PK — used for targeted updates
+            "membership_id":   m["id"],
             "user_id":         m["user_id"],
             "intern_role":     m["intern_role"],
             "group_id":        group_id,
@@ -171,87 +184,43 @@ def _get_team_for_project(project_id: str) -> list[dict]:
     return _get_team_for_group(group["id"])
 
 
-def assign_role_tasks_to_user(project_id: str, user_id: str, intern_role: str):
+def assign_role_tasks_to_user(
+    project_id: str,
+    user_id: str,
+    intern_role: str,
+    group_id: str | None = None,
+):
     """
-    Copy template tasks (assigned_to IS NULL) matching this user's role
-    into their personal task list. Idempotent.
+    Initialise Sprint 0 for an intern using the adaptive pool engine.
+
+    The engine will:
+      1. Get/create Sprint 0 for this role (named "Sprint 0 — {Role}")
+      2. Build the task pool:  ceil(member_count × 3.5) tasks split 43/43/14
+      3. Assign initial 2 tasks (1 easy + 1 medium) to this intern
+      4. Leave the remaining pool unassigned
+
+    Idempotent — the engine's assign_initial_tasks hard-guards: if intern
+    already has ≥ 2 tasks in the sprint it skips entirely.
+
+    IMPORTANT: Only call this ONCE per user join, not on every request.
+    The old code called this in the "already in project" early-return path
+    AND in the normal join path — that caused double-assignment (6 tasks).
+    Now it is only called in the normal join path.
     """
-    existing = (
-        db.table("tasks").select("id")
-        .eq("project_id", project_id)
-        .eq("assigned_to", user_id)
-        .execute()
-    )
-    if existing.data:
-        return  # already assigned
-
-    templates = (
-        db.table("tasks").select("*")
-        .eq("project_id", project_id)
-        .eq("intern_role", intern_role)
-        .is_("assigned_to", "null")
-        .execute()
-    )
-    if not templates.data:
-        logger.warning(f"No template tasks for role={intern_role} project={project_id}")
-        return
-
-    # Find or create the active sprint for this project
-    sprint_id = _get_or_create_sprint(project_id, user_id)
-
-    now = _now()
-    new_tasks = [
-        {
-            "id":          str(uuid.uuid4()),
-            "project_id":  project_id,
-            "assigned_to": user_id,
-            "sprint_id":   sprint_id or t.get("sprint_id"),
-            "title":       t["title"],
-            "description": t.get("description"),
-            "priority":    t.get("priority", "medium"),
-            "status":      "todo",
-            "due_date":    t.get("due_date"),
-            "resources":   t.get("resources"),
-            "intern_role": intern_role,
-            "created_at":  now,
-            "updated_at":  now,
-            "created_by":  user_id,
-        }
-        for t in templates.data
-    ]
-    db.table("tasks").insert(new_tasks).execute()
-
-
-def _get_or_create_sprint(project_id: str, user_id: str) -> str | None:
-    """Returns the active sprint_id for a project, creating one if needed."""
-    existing = (
-        db.table("sprints")
-        .select("id")
-        .eq("project_id", project_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-    )
-    if existing.data:
-        return existing.data[0]["id"]
-
-    from datetime import date, timedelta
-    today = date.today()
     try:
-        created = db.table("sprints").insert({
-            "id":          str(uuid.uuid4()),
-            "project_id":  project_id,
-            "title":       "Sprint 1",
-            "description": "First sprint",
-            "start_date":  today.isoformat(),
-            "end_date":    (today + timedelta(days=14)).isoformat(),
-            "is_active":   True,
-            "created_by":  user_id,
-        }).execute()
-        return created.data[0]["id"] if created.data else None
+        from app.services.adaptive_engine import initialise_sprint_for_intern
+        initialise_sprint_for_intern(
+            user_id=user_id,
+            project_id=project_id,
+            group_id=group_id,
+            intern_role=intern_role,
+        )
     except Exception as e:
-        logger.warning(f"Could not create sprint for project {project_id}: {e}")
-        return None
+        logger.error(
+            f"[AdaptiveEngine] assign_role_tasks_to_user failed "
+            f"user={user_id} project={project_id} role={intern_role}: {e}",
+            exc_info=True,
+        )
 
 
 def _get_user_repo_url(project_id: str, user_id: str) -> str:
@@ -300,19 +269,6 @@ def _activate_project_github(project_id: str, group_id: str):
     """
     Background task: create a unique GitHub repo for this specific group,
     then invite all its members as collaborators.
-
-    Repo name pattern: {project-slug}-g{first-8-hex-of-group-uuid}
-    e.g.  ecommerce-platform-g3f2a1b0
-
-    This means two groups of the same project get separate repos:
-      ecommerce-platform-g3f2a1b0   ← group 1
-      ecommerce-platform-g9c1d2e5   ← group 2
-
-    The repo URL is stored on:
-      • project_groups.repo_url          (authoritative per-group record)
-      • group_members.github_repo_url    (per-member row, used by VS Code connect)
-      • user_projects.github_repo_url    (used by setup-token endpoint)
-      • projects.internx_repo_url        (last-write-wins; fine for display)
     """
     if not settings.github_org_token:
         logger.warning("GITHUB_ORG_TOKEN not set — skipping repo creation")
@@ -324,7 +280,6 @@ def _activate_project_github(project_id: str, group_id: str):
             return
         project = project_res.data[0]
 
-        # Fetch only THIS group's members (not all groups of the same project)
         team = _get_team_for_group(group_id)
         if not team:
             logger.warning(f"_activate_project_github: group {group_id} has no members")
@@ -339,7 +294,6 @@ def _activate_project_github(project_id: str, group_id: str):
             except Exception:
                 tech_stack = [tech_stack]
 
-        # setup_project_repo now receives group_id so it can build a unique name
         result = setup_project_repo(
             project_title=project["project_title"],
             group_id=group_id,
@@ -351,19 +305,15 @@ def _activate_project_github(project_id: str, group_id: str):
         repo_url  = result["repo_url"]
         repo_name = result["repo_name"]
 
-        # 1. Store on project_groups (each group keeps its own repo reference)
         db.table("project_groups").update({
             "repo_url":  repo_url,
             "repo_name": repo_name,
         }).eq("id", group_id).execute()
 
-        # 2. Keep projects.internx_repo_url in sync (last-write wins — okay for display)
         db.table("projects").update({
             "internx_repo_url": repo_url,
         }).eq("id", project_id).execute()
 
-        # 3. Save the URL on each member's group_members row and user_projects,
-        #    using membership_id so we update the exact row, not every row for that user
         for member in team:
             db.table("group_members").update({
                 "github_repo_url": repo_url,
@@ -391,9 +341,6 @@ def _check_and_activate_project(
     """
     Check if all slots for this project's forming group are filled.
     If yes, mark project and its group as active and fire the GitHub repo task.
-    Also re-triggers repo creation if the group is already active but has no repo yet
-    (handles cases where members joined before the GitHub service was wired up).
-    Returns True if activation was triggered.
     """
     team_roles = project.get("team_roles") or {}
     if not team_roles:
@@ -403,7 +350,6 @@ def _check_and_activate_project(
     if not group:
         return False
 
-    # If group is already active but missing a repo URL, re-trigger creation
     if group.get("status") == "active" and not group.get("repo_url"):
         logger.info(
             f"Group {group['id']} is active but has no repo — re-triggering GitHub repo creation"
@@ -414,9 +360,8 @@ def _check_and_activate_project(
     for role, required_count in team_roles.items():
         filled = _count_role_in_group(group["id"], role)
         if filled < required_count:
-            return False  # Still waiting for this role
+            return False
 
-    # All slots filled — activate the group and project
     db.table("projects").update({"project_status": "active"}).eq("id", project_id).execute()
     db.table("project_groups").update({"status": "active"}).eq("id", group["id"]).execute()
 
@@ -425,7 +370,6 @@ def _check_and_activate_project(
         f"triggering GitHub repo creation"
     )
 
-    # Fire-and-forget in a background thread; pass both IDs so the repo gets a unique name
     background_tasks.add_task(_activate_project_github, project_id, group["id"])
     return True
 
@@ -448,20 +392,27 @@ async def list_available_projects(current_user: dict = Depends(get_current_user)
     if not intern_role:
         raise HTTPException(400, "Complete onboarding first — no intern_role set")
 
-    # Find projects the user has already joined via group_members
+    # Find projects the user has already joined — flat queries only
     memberships = (
         db.table("group_members")
-        .select("project_groups(project_id)")
+        .select("group_id")
         .eq("user_id", current_user["id"])
         .execute()
     )
     joined_project_ids = set()
     for m in (memberships.data or []):
-        pg = m.get("project_groups")
-        if pg and pg.get("project_id"):
-            joined_project_ids.add(pg["project_id"])
+        gid = m.get("group_id")
+        if gid:
+            pg = (
+                db.table("project_groups")
+                .select("project_id")
+                .eq("id", gid)
+                .limit(1)
+                .execute()
+            )
+            if pg.data and pg.data[0].get("project_id"):
+                joined_project_ids.add(pg.data[0]["project_id"])
 
-    # All open projects
     all_projects = (
         db.table("projects").select("*")
         .eq("project_status", "open")
@@ -477,7 +428,6 @@ async def list_available_projects(current_user: dict = Depends(get_current_user)
 
         team_roles = p.get("team_roles") or {}
         if not team_roles:
-            # Single-role project
             if p.get("intern_role") == intern_role:
                 p["open_slots_for_role"] = 1
                 available.append(p)
@@ -486,7 +436,6 @@ async def list_available_projects(current_user: dict = Depends(get_current_user)
         if intern_role not in team_roles:
             continue
 
-        # Check vacancy in the forming group
         group = _get_active_group_for_project(p["id"])
         if group:
             filled = _count_role_in_group(group["id"], intern_role)
@@ -511,7 +460,8 @@ async def join_project(
     Assigns the user to a project that has a vacancy for their intern_role.
     - If body.project_id is given, joins that specific project.
     - Otherwise auto-picks a random available project.
-    - Idempotent: if already in a project, returns it immediately.
+    - Idempotent: if already in a project, returns it immediately WITHOUT
+      re-running the adaptive engine (that was the source of the 6-task bug).
     """
     user_id     = current_user["id"]
     intern_role = current_user.get("intern_role")
@@ -521,20 +471,42 @@ async def join_project(
     if intern_role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid intern_role: {intern_role}")
 
-    # ── Already in a project? Return it ──────────────────────────
+    # ── Already in a project? Return it immediately ───────────────
+    # FIX: Do NOT call assign_role_tasks_to_user here. The engine already
+    # ran when the user first joined. Calling it again caused a second
+    # initialise_sprint_for_intern which doubled the task assignments.
     existing = _get_user_group_membership(user_id)
     if existing:
-        pg = existing.get("project_groups") or {}
-        project_id = pg.get("project_id") if isinstance(pg, dict) else None
+        group_id = existing.get("group_id")
+        project_id = None
+
+        if group_id:
+            pg = (
+                db.table("project_groups")
+                .select("project_id")
+                .eq("id", group_id)
+                .limit(1)
+                .execute()
+            )
+            if pg.data:
+                project_id = pg.data[0].get("project_id")
+
+        # Fallback: profiles.project_id
         if not project_id:
-            # Fallback: check profiles
-            profile = db.table("profiles").select("project_id").eq("id", user_id).limit(1).execute()
-            project_id = profile.data[0].get("project_id") if profile.data else None
+            profile = (
+                db.table("profiles")
+                .select("project_id")
+                .eq("id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if profile.data:
+                project_id = profile.data[0].get("project_id")
 
         if project_id:
             project_res = db.table("projects").select("*").eq("id", project_id).execute()
             if project_res.data:
-                assign_role_tasks_to_user(project_id, user_id, intern_role)
+                # Return early — no task engine call here
                 return _enrich_project(dict(project_res.data[0]), user_id, intern_role)
 
     # ── Find a suitable project ───────────────────────────────────
@@ -593,8 +565,8 @@ async def join_project(
     # Update profiles.project_id for fast lookup
     db.table("profiles").update({"project_id": project_id}).eq("id", user_id).execute()
 
-    # Copy role-specific tasks + ensure sprint exists
-    assign_role_tasks_to_user(project_id, user_id, intern_role)
+    # Initialise Sprint 0 + assign 1 easy + 1 medium task — called ONCE here only
+    assign_role_tasks_to_user(project_id, user_id, intern_role, group_id=chosen_group["id"])
 
     # ── Check if team is now full → activate + create GitHub repo ─
     _check_and_activate_project(project_id, chosen, background_tasks)
@@ -633,9 +605,6 @@ async def get_project_team(project_id: str, current_user: dict = Depends(get_cur
             "members":      filled_members,
         })
 
-    # Use only project_groups.repo_url — this is set when the GitHub repo is actually
-    # created for this group. Do NOT fall back to projects.internx_repo_url because
-    # that column may hold a stale hardcoded URL from before the multiplayer system.
     group = _get_active_group_for_project(project_id)
     group_repo_url = (group or {}).get("repo_url") or None
 
@@ -652,16 +621,10 @@ async def get_project_team(project_id: str, current_user: dict = Depends(get_cur
 async def get_project_groups(project_id: str, current_user: dict = Depends(get_current_user)):
     """
     Returns all project_groups for this project that have at least one member.
-    If the project only has one group (common single-cohort setup), falls back to
-    returning virtual role-based sub-teams derived from group_members.intern_role,
-    so the tickets "Addressed To" picker is never empty.
-
-    Each item has: id, project_id, name, cohort_label, status.
-    Virtual role items additionally carry virtual=True, real_group_id, role.
+    If the project only has one group, falls back to virtual role-based sub-teams.
     """
     import hashlib
 
-    # 1. Real groups for this project
     groups_res = (
         db.table("project_groups")
         .select("id, project_id, name, cohort_label, status")
@@ -670,11 +633,9 @@ async def get_project_groups(project_id: str, current_user: dict = Depends(get_c
     )
     groups = groups_res.data or []
 
-    # If 2+ distinct groups exist, return them directly
     if len(groups) >= 2:
         return groups
 
-    # ── Single-group project: synthesise virtual role-teams ──────────────────
     group = groups[0] if groups else None
     if not group:
         return []
@@ -754,18 +715,7 @@ async def retry_repo_creation(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Manually re-trigger GitHub repo creation for a project's active group.
-
-    Use this when:
-    - The team is fully assembled but the repo was never created (e.g. GITHUB_ORG_TOKEN
-      was missing or wrong when the last member joined).
-    - The repo URL is missing from the UI even though the project is 'active'.
-
-    Safe to call multiple times — if the repo already exists on GitHub the service
-    fetches it instead of re-creating it, and all collaborator invitations are
-    re-sent (GitHub ignores duplicates).
-    """
+    """Manually re-trigger GitHub repo creation for a project's active group."""
     project_res = db.table("projects").select("*").eq("id", project_id).execute()
     if not project_res.data:
         raise HTTPException(404, "Project not found")
@@ -801,9 +751,6 @@ async def get_setup_token(project_id: str, current_user: dict = Depends(get_curr
         raise HTTPException(404, "Project not found")
     project = result.data[0]
 
-    # Prefer the group-specific repo URL (only set after GitHub repo is actually created).
-    # Fall back to the user's personal repo URL — never use projects.internx_repo_url
-    # because it may hold a stale hardcoded value from before the multiplayer system.
     group = _get_active_group_for_project(project_id)
     group_repo_url = (group or {}).get("repo_url") if group else None
     repo_url = (
@@ -887,3 +834,11 @@ async def get_setup_token(project_id: str, current_user: dict = Depends(get_curr
         "task_id":    task_id,
         "expires_in": 300,
     }
+
+
+@router.get("/groups/{group_id}")
+async def get_group(group_id: str, current_user: dict = Depends(get_current_user)):
+    result = db.table("project_groups").select("*").eq("id", group_id).execute()
+    if not result.data:
+        raise HTTPException(404, "Group not found")
+    return result.data[0]
